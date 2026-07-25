@@ -29,7 +29,7 @@ const ItemsForm = ({ invoiceData, handleItemChange, addItem, removeItem }) => {
               )}
 
               {/* Description Input */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+              <div className=" gap-4 mb-4">
                 <div className="relative">
                   <label className="block text-xs font-semibold   mb-1 ml-1">Item Name / Description</label>
                   <input
