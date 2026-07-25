@@ -102,12 +102,20 @@ export function useInvoiceAPI(
         // Re-fetch from server — server is the single source of truth for next numbers
         await fetchSavedInvoices();
 
-        // Bug 1 fix: Reset the form to defaults with next invoice number
+        // Reset the form to defaults with next invoice number
         // so the user sees a clean form after saving
         if (resetToDefault) resetToDefault();
       } else {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || 'Failed to save invoice');
+        // On duplicate number error (409), re-fetch to get latest numbers
+        // so the user gets a fresh valid number instead of being stuck
+        if (response.status === 409) {
+          await fetchSavedInvoices();
+          if (resetToDefault) resetToDefault();
+          alert(errorData.error || 'Invoice number already exists. Form has been refreshed with a new number. Please try saving again.');
+        } else {
+          throw new Error(errorData.error || 'Failed to save invoice');
+        }
       }
     } catch (error) {
       console.error('Error saving invoice:', error);
@@ -191,9 +199,9 @@ export function useInvoiceAPI(
         paymentTerms: clonedInvoice.paymentTerms || '',
         notes: clonedInvoice.notes || '',
       },
-      // Deep clone items — each item is a new object
-      items: (clonedInvoice.items || []).map(item => ({
-        id: item.id,
+      // Deep clone items — each item is a new object with guaranteed unique ID
+      items: (clonedInvoice.items || []).map((item, idx) => ({
+        id: item.id || `item_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 9)}`,
         description: item.description || '',
         hsn: item.hsn || '',
         sac: item.sac || '',
@@ -222,8 +230,10 @@ export function useInvoiceAPI(
     setInvoiceData(loadedInvoice);
     setCurrentMode(clonedInvoice.mode || 'gst-bill');
     setQuotationGstOption(clonedInvoice.quotationGstOption || 'with-gst');
+    // IMPORTANT: Clear editingInvoiceId so loading a view doesn't put us in edit mode
+    setEditingInvoiceId(null);
     alert('Invoice loaded successfully!');
-  }, [setInvoiceData, setCurrentMode, setQuotationGstOption]);
+  }, [setInvoiceData, setCurrentMode, setQuotationGstOption, setEditingInvoiceId]);
 
   // ==========================================================================
   // EDIT — Load an invoice for editing (enables edit mode)
@@ -302,8 +312,8 @@ export function useInvoiceAPI(
         paymentTerms: clonedInvoice.paymentTerms || '',
         notes: clonedInvoice.notes || '',
       },
-      items: (clonedInvoice.items || []).map(item => ({
-        id: item.id,
+      items: (clonedInvoice.items || []).map((item, idx) => ({
+        id: item.id || `item_${Date.now()}_${idx}_${Math.random().toString(36).slice(2, 9)}`,
         description: item.description || '',
         hsn: item.hsn || '',
         sac: item.sac || '',
@@ -404,6 +414,13 @@ export function useInvoiceAPI(
       return;
     }
 
+    // If the deleted invoice is currently being edited, clear the editing state
+    // BEFORE optimistic removal to prevent re-saving deleted data
+    const wasEditing = editingInvoiceId === invoiceId;
+    if (wasEditing) {
+      setEditingInvoiceId(null);
+    }
+
     // Optimistic removal from local state
     setSavedInvoices(prev => prev.filter(inv => inv.id !== invoiceId));
 
@@ -421,8 +438,16 @@ export function useInvoiceAPI(
         if (result.nextSlipNo && setNextSlipNo) setNextSlipNo(result.nextSlipNo.toString());
         // Re-fetch to ensure consistency
         await fetchSavedInvoices();
+        // Reset form if the deleted invoice was being edited
+        if (wasEditing && resetToDefault) {
+          resetToDefault();
+        }
       } else {
         // Rollback optimistic update on failure
+        if (wasEditing) {
+          // Restore editing state if delete failed
+          setEditingInvoiceId(invoiceId);
+        }
         await fetchSavedInvoices();
         throw new Error('Failed to delete invoice');
       }
@@ -432,7 +457,7 @@ export function useInvoiceAPI(
       // Rollback: re-fetch from server
       await fetchSavedInvoices();
     }
-  }, [setSavedInvoices, setNextInvoiceNo, setNextDcNo, setNextSlipNo, fetchSavedInvoices]);
+  }, [editingInvoiceId, setEditingInvoiceId, setSavedInvoices, setNextInvoiceNo, setNextDcNo, setNextSlipNo, fetchSavedInvoices, resetToDefault]);
 
   // ==========================================================================
   // PAYMENT — Handle payment status updates

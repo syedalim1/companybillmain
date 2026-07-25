@@ -72,7 +72,7 @@ function getDefaultInvoiceData(invoiceNo = '1') {
     },
     items: [
       {
-        id: 1,
+        id: `item_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
         description: "MS Table \u2013 Metal Furniture (for Job Work)",
         hsn: '9403',
         sac: '',
@@ -205,10 +205,9 @@ export function useInvoiceState() {
 
   const addItem = useCallback(() => {
     setInvoiceData(prev => {
-      // Compute next ID from existing items to prevent collisions
-      const maxId = prev.items.reduce((max, item) => Math.max(max, item.id || 0), 0);
+      // Use unique string IDs to prevent React key collisions
       const newItem = {
-        id: maxId + 1,
+        id: `item_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`,
         description: '',
         hsn: '',
         sac: '',
@@ -221,10 +220,10 @@ export function useInvoiceState() {
     });
   }, []);
 
-  const removeItem = useCallback((index) => {
+  const removeItem = useCallback((itemId) => {
     setInvoiceData(prev => ({
       ...prev,
-      items: prev.items.filter((_, i) => i !== index),
+      items: prev.items.filter(item => item.id !== itemId),
     }));
   }, []);
 

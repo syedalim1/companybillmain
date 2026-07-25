@@ -14,11 +14,11 @@ const ItemsForm = ({ invoiceData, handleItemChange, addItem, removeItem }) => {
       <div className="space-y-6">
         {invoiceData.items.map((item, index) => {
           return (
-            <div key={item.id || index} className="relative  rounded-2xl p-5  hover:border-brand-accent/40 transition-all duration-200 group">
+            <div key={item.id} className="relative  rounded-2xl p-5  hover:border-brand-accent/40 transition-all duration-200 group">
               {/* Remove Button */}
               {invoiceData.items.length > 1 && (
                 <button
-                  onClick={() => removeItem(index)}
+                  onClick={() => removeItem(item.id)}
                   className="absolute -top-2 -right-2 bg-rose-50 dark:bg-rose-950/80 text-rose-600 dark:text-rose-400 p-1.5 rounded-full hover:bg-rose-100 dark:hover:bg-rose-900 shadow-sm opacity-0 group-hover:opacity-100 transition-all border border-rose-100 dark:border-rose-900 cursor-pointer"
                   title="Remove Item"
                 >
