@@ -125,9 +125,26 @@ export function useInvoiceState() {
   const [invoiceData, setInvoiceData] = useState(getDefaultInvoiceData());
 
   // Handle generator selection
-  const handleSelectGenerator = (generatorType) => {
+  const handleSelectGenerator = useCallback((generatorType) => {
+    if (currentMode === generatorType) return;
+    
+    // Simple dirty check to protect unsaved user input
+    // Editing an existing invoice or having filled out buyer name / items suggests dirty state
+    const hasItems = invoiceData.items && invoiceData.items.length > 0 && invoiceData.items[0].description !== "MS Table \u2013 Metal Furniture (for Job Work)";
+    const hasBuyer = invoiceData.buyer && invoiceData.buyer.name !== '';
+    const isDirty = hasItems || hasBuyer || editingInvoiceId !== null;
+
+    if (isDirty) {
+      if (!window.confirm("You have unsaved changes. Switching to a different document type will discard them. Continue?")) {
+        return;
+      }
+    }
+
+    // Safe state transition: initialize new module with clean default state
     setCurrentMode(generatorType);
-  };
+    setEditingInvoiceId(null);
+    setInvoiceData(getDefaultInvoiceData('1')); // Number gets auto-updated by the effect
+  }, [currentMode, invoiceData, editingInvoiceId]);
 
   // Handle quotation GST option change
   const handleQuotationGstChange = (gstOption) => {

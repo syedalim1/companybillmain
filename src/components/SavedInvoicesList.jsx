@@ -12,6 +12,23 @@ export default function SavedInvoicesList({
   const [isOpen, setIsOpen] = useState(true);
   const [showSearch, setShowSearch] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // Advanced Filters
+  const [filterMonth, setFilterMonth] = useState('all');
+  const [filterYear, setFilterYear] = useState('all');
+  const [filterStatus, setFilterStatus] = useState('all');
+  const [showAll, setShowAll] = useState(false);
+  
+  // Clear filters when mode changes to prevent stale state
+  React.useEffect(() => {
+    setSearchQuery('');
+    setFilterMonth('all');
+    setFilterYear('all');
+    setFilterStatus('all');
+    setShowAll(false);
+    setShowSearch(false);
+  }, [currentMode]);
+
 
   // Determine section title dynamically
   const title = useMemo(() => {
@@ -32,36 +49,71 @@ export default function SavedInvoicesList({
     return savedInvoices.filter(invoice => invoice.mode === currentMode);
   }, [savedInvoices, currentMode]);
 
-  // Apply search filter
+  // Apply search and structural filters
   const filteredInvoices = useMemo(() => {
-    if (!searchQuery.trim()) return filteredByMode;
+    let result = filteredByMode;
 
-    const query = searchQuery.toLowerCase().trim();
-    return filteredByMode.filter(invoice => {
-      // Search in snapshot data first, fall back to relation data
-      const buyerName = (invoice.buyerName || invoice.buyer?.name || '').toLowerCase();
-      const invoiceNo = (invoice.invoiceNo || '').toLowerCase();
-      const dcNo = (invoice.dcNo || '').toLowerCase();
-      const grandTotal = (invoice.grandTotal || 0).toString();
-      const date = (invoice.date || '').toLowerCase();
+    // 1. Apply Structural Filters
+    if (filterMonth !== 'all') {
+      result = result.filter(inv => {
+        if (!inv.date) return false;
+        return (new Date(inv.date).getMonth() + 1).toString() === filterMonth;
+      });
+    }
 
-      return (
-        buyerName.includes(query) ||
-        invoiceNo.includes(query) ||
-        dcNo.includes(query) ||
-        grandTotal.includes(query) ||
-        date.includes(query)
-      );
-    });
-  }, [filteredByMode, searchQuery]);
+    if (filterYear !== 'all') {
+      result = result.filter(inv => {
+        if (!inv.date) return false;
+        return new Date(inv.date).getFullYear().toString() === filterYear;
+      });
+    }
 
-  // Limit to last 5 invoices unless search mode is active or query is entered
+    if (filterStatus !== 'all') {
+      result = result.filter(inv => {
+        if (currentMode === 'dc-bill') {
+          return inv.dcStatus === filterStatus;
+        } else if (currentMode === 'gst-bill' || currentMode === 'slip-bill') {
+          // Unpaid filter should also catch undefined/null status
+          if (filterStatus === 'unpaid') {
+            return !inv.paymentStatus || inv.paymentStatus === 'unpaid';
+          }
+          return inv.paymentStatus === filterStatus;
+        }
+        // Quotations usually don't have payment status in this app, but if they do, filter it.
+        return true; 
+      });
+    }
+
+    // 2. Apply Text Search
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase().trim();
+      result = result.filter(invoice => {
+        const buyerName = (invoice.buyerName || invoice.buyer?.name || '').toLowerCase();
+        const invoiceNo = (invoice.invoiceNo || '').toLowerCase();
+        const dcNo = (invoice.dcNo || '').toLowerCase();
+        const grandTotal = (invoice.grandTotal || 0).toString();
+        const date = (invoice.date || '').toLowerCase();
+
+        return (
+          buyerName.includes(query) ||
+          invoiceNo.includes(query) ||
+          dcNo.includes(query) ||
+          grandTotal.includes(query) ||
+          date.includes(query)
+        );
+      });
+    }
+
+    return result;
+  }, [filteredByMode, searchQuery, filterMonth, filterYear, filterStatus, currentMode]);
+
+  // Limit to 50 items for presentation unless showAll is active
   const displayedInvoices = useMemo(() => {
-    if (showSearch || searchQuery.trim()) {
+    if (showAll) {
       return filteredInvoices;
     }
-    return filteredByMode.slice(0, 5);
-  }, [filteredByMode, filteredInvoices, showSearch, searchQuery]);
+    return filteredInvoices.slice(0, 50);
+  }, [filteredInvoices, showAll]);
 
   // Get buyer name from snapshot fields with fallback to relation
   const getBuyerName = (invoice) => {
@@ -74,8 +126,8 @@ export default function SavedInvoicesList({
       return;
     }
     
-    // Export what the user currently sees (or the whole mode list if no search)
-    const dataToExport = searchQuery.trim() ? filteredInvoices : filteredByMode;
+    // Export what the user currently filtered, ignoring the 50-item UI truncation
+    const dataToExport = filteredInvoices;
     
     const exportData = dataToExport.map(inv => ({
       'Date': inv.date ? new Date(inv.date).toLocaleDateString('en-GB') : '',
@@ -136,7 +188,6 @@ export default function SavedInvoicesList({
               <button
                 onClick={() => {
                   setShowSearch(!showSearch);
-                  if (showSearch) setSearchQuery(''); // Reset search on close
                 }}
                 className={`p-2 rounded-xl transition-all duration-200 flex items-center justify-center border cursor-pointer ${
                   showSearch
@@ -192,6 +243,79 @@ export default function SavedInvoicesList({
                 </button>
               )}
             </div>
+            
+            {/* Structural Filters */}
+            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 animate-in fade-in zoom-in-95 duration-200">
+              <select
+                value={filterMonth}
+                onChange={(e) => setFilterMonth(e.target.value)}
+                className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600 focus:outline-none focus:ring-1 focus:ring-brand-primary/50"
+              >
+                <option value="all">All Months</option>
+                <option value="1">January</option>
+                <option value="2">February</option>
+                <option value="3">March</option>
+                <option value="4">April</option>
+                <option value="5">May</option>
+                <option value="6">June</option>
+                <option value="7">July</option>
+                <option value="8">August</option>
+                <option value="9">September</option>
+                <option value="10">October</option>
+                <option value="11">November</option>
+                <option value="12">December</option>
+              </select>
+
+              <select
+                value={filterYear}
+                onChange={(e) => setFilterYear(e.target.value)}
+                className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600 focus:outline-none focus:ring-1 focus:ring-brand-primary/50"
+              >
+                <option value="all">All Years</option>
+                {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map(year => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+
+              {(currentMode === 'gst-bill' || currentMode === 'slip-bill' || currentMode === 'dc-bill') && (
+                <select
+                  value={filterStatus}
+                  onChange={(e) => setFilterStatus(e.target.value)}
+                  className="w-full p-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-600 focus:outline-none focus:ring-1 focus:ring-brand-primary/50"
+                >
+                  <option value="all">All Status</option>
+                  {currentMode === 'dc-bill' ? (
+                    <>
+                      <option value="pending">Pending</option>
+                      <option value="delivered">Delivered</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="paid">Paid</option>
+                      <option value="unpaid">Unpaid</option>
+                      <option value="partial">Partial</option>
+                      <option value="overdue">Overdue</option>
+                    </>
+                  )}
+                </select>
+              )}
+
+              {(searchQuery || filterMonth !== 'all' || filterYear !== 'all' || filterStatus !== 'all') && (
+                <button
+                  onClick={() => {
+                    setSearchQuery('');
+                    setFilterMonth('all');
+                    setFilterYear('all');
+                    setFilterStatus('all');
+                  }}
+                  className="w-full p-2 bg-red-50 text-red-600 hover:bg-red-100 border border-red-100 rounded-lg text-xs font-medium transition-colors"
+                >
+                  Clear Filters
+                </button>
+              )}
+            </div>
+            
+            </>
           )}
 
           {/* Results count */}
@@ -331,17 +455,17 @@ export default function SavedInvoicesList({
             </div>
           ))}
 
-          {/* Show banner if search is inactive and there are more than 5 bills */}
-          {!showSearch && filteredByMode.length > 5 && (
+          {/* Show banner if there are more than 50 items and showAll is false */}
+          {!showAll && filteredInvoices.length > 50 && (
             <div className="flex items-center justify-between p-3.5 bg-slate-50/70 dark:bg-slate-900/30 rounded-xl border border-dashed border-slate-200 dark:border-slate-800 text-xs animate-in fade-in duration-300">
               <span className="text-slate-500">
-                Showing the 5 most recent bills.
+                Showing the 50 most recent records.
               </span>
               <button
-                onClick={() => setShowSearch(true)}
+                onClick={() => setShowAll(true)}
                 className="font-semibold text-brand-primary hover:text-brand-primary-hover hover:underline transition-colors focus:outline-none cursor-pointer"
               >
-                Search & View All {filteredByMode.length} Bills
+                View All {filteredInvoices.length} Records
               </button>
             </div>
           )}
