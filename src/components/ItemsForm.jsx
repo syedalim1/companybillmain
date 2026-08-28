@@ -1,7 +1,42 @@
 "use client";
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
 const ItemsForm = ({ invoiceData, handleItemChange, addItem, removeItem }) => {
+  const [products, setProducts] = useState([]);
+
+  useEffect(() => {
+    const fetchProducts = async () => {
+      try {
+        const response = await fetch('/api/products');
+        if (response.ok) {
+          const data = await response.json();
+          setProducts(data.products || []);
+        }
+      } catch (error) {
+        console.error('Failed to fetch products:', error);
+      }
+    };
+    fetchProducts();
+  }, []);
+
+  const handleDescriptionChange = (index, value) => {
+    // Call the original handleItemChange
+    handleItemChange(index, 'description', value);
+    
+    // Check if the typed value perfectly matches a product name
+    const matchedProduct = products.find(p => p.name.toLowerCase() === value.toLowerCase());
+    
+    // If a product is selected, auto-populate the OTHER fields
+    // without overwriting existing unrelated document data.
+    if (matchedProduct) {
+      handleItemChange(index, 'hsn', matchedProduct.hsn || '');
+      handleItemChange(index, 'sac', matchedProduct.sac || '');
+      handleItemChange(index, 'unit', matchedProduct.unit || 'Nos');
+      handleItemChange(index, 'rate', parseFloat(matchedProduct.rate) || 0);
+      // NOTE: gstRate could be handled here if invoiceData tracked item-level tax,
+      // but it seems the app uses a global taxRate. 
+    }
+  };
   return (
     <div className="bg-white   rounded-2xl shadow-sm /80 p-6 transition-all duration-300">
       <h3 className="text-sm font-bold text-text-title uppercase tracking-wider mb-6 flex items-center gap-2 pb-4 border-b border-slate-100    /80">
@@ -34,11 +69,19 @@ const ItemsForm = ({ invoiceData, handleItemChange, addItem, removeItem }) => {
                   <label className="block text-xs font-semibold   mb-1 ml-1">Item Name / Description</label>
                   <input
                     type="text"
+                    list={`products-list-${index}`}
                     value={item.description}
-                    onChange={(e) => handleItemChange(index, 'description', e.target.value)}
-                    placeholder="Enter item description..."
+                    onChange={(e) => handleDescriptionChange(index, e.target.value)}
+                    placeholder="Enter item description or select a saved product..."
                     className="w-full border p-2.5 border-gray-200 bg-white    rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/50 text-sm font-semibold text-text-title"
                   />
+                  <datalist id={`products-list-${index}`}>
+                    {products.map(product => (
+                      <option key={product.id} value={product.name}>
+                        {product.description ? `${product.description} - ₹${product.rate}` : `₹${product.rate}`}
+                      </option>
+                    ))}
+                  </datalist>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">

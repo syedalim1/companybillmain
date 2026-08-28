@@ -77,28 +77,82 @@ const ClientForm = ({ invoiceData, handleInputChange }) => {
       if (response.ok) {
         const data = await response.json();
         
-        // Handle different API response structures (gst-insights-api returns { success: true, data: [...] })
+        // Handle different API response structures
         let gstInfo = data;
         if (data.success && Array.isArray(data.data) && data.data.length > 0) {
           gstInfo = data.data[0];
         }
 
-        const businessName = gstInfo.tradeName || gstInfo.legalName || gstInfo.lgnm || gstInfo.tradeNam || gstInfo.trade_name || gstInfo.legal_name;
+        // --- Map GST response fields ---
+        const legalName = gstInfo?.legalName || gstInfo?.lgnm || '';
+        const tradeName = gstInfo?.tradeName || gstInfo?.tradeNam || '';
+        const businessName = tradeName || legalName;
         
+        // Build full address from principal address object
         let address = '';
-        if (gstInfo.principalAddress?.address) {
-          const addrObj = gstInfo.principalAddress.address;
-          address = [addrObj.buildingNumber, addrObj.street, addrObj.location, addrObj.district, addrObj.pincode].filter(Boolean).join(', ');
+        let pincode = '';
+        if (gstInfo?.principalAddress?.address) {
+          const a = gstInfo.principalAddress.address;
+          address = [a.buildingNumber, a.buildingName, a.floorNumber, a.street, a.location, a.locality, a.district, a.stateCode, a.pincode].filter(Boolean).join(', ');
+          pincode = a.pincode || '';
         } else {
-          address = gstInfo.pradr?.adr || gstInfo.pradr?.addr?.bno || gstInfo.address || '';
+          address = gstInfo?.pradr?.adr || gstInfo?.pradr?.addr?.bno || gstInfo?.address || '';
         }
         
         if (businessName) handleInputChange('buyer', 'name', businessName);
         if (address) handleInputChange('buyer', 'address', address);
         
-        // Auto-parse state if not present in API or use API's state
-        const stateName = gstInfo.principalAddress?.address?.stateCode || gstInfo.pradr?.addr?.stcd || gstInfo.state || getStateFromGstin(gstin)?.name;
+        // Auto-parse state
+        const stateName = gstInfo?.principalAddress?.address?.stateCode || gstInfo?.state || getStateFromGstin(gstin)?.name;
         if (stateName) handleInputChange('buyer', 'state', stateName);
+
+        const stateCode = parseInt(gstin.substring(0, 2), 10);
+        if (!isNaN(stateCode)) handleInputChange('buyer', 'stateCode', stateCode);
+
+        // Map all GST detail fields
+        if (legalName) handleInputChange('buyer', 'legalName', legalName);
+        if (tradeName) handleInputChange('buyer', 'tradeName', tradeName);
+        
+        const constitutionOfBusiness = gstInfo?.constitutionOfBusiness || gstInfo?.ctb || '';
+        if (constitutionOfBusiness) handleInputChange('buyer', 'constitutionOfBusiness', constitutionOfBusiness);
+        
+        const taxType = gstInfo?.taxType || gstInfo?.dty || '';
+        if (taxType) handleInputChange('buyer', 'taxType', taxType);
+        
+        const gstStatus = gstInfo?.status || gstInfo?.sts || '';
+        if (gstStatus) handleInputChange('buyer', 'gstStatus', gstStatus);
+        
+        const registrationDate = gstInfo?.registrationDate || gstInfo?.rgdt || '';
+        if (registrationDate) handleInputChange('buyer', 'registrationDate', registrationDate);
+        
+        const cancelledDate = gstInfo?.cancelledDate || gstInfo?.cxdt || '';
+        if (cancelledDate) handleInputChange('buyer', 'cancelledDate', cancelledDate);
+        
+        const eInvoiceStatus = gstInfo?.eInvoiceStatus || gstInfo?.einvoiceStatus || '';
+        if (eInvoiceStatus) handleInputChange('buyer', 'eInvoiceStatus', eInvoiceStatus);
+
+        const natureOfBusinessActivity = Array.isArray(gstInfo?.natureOfBusinessActivity)
+          ? gstInfo.natureOfBusinessActivity.join(', ')
+          : (gstInfo?.natureOfBusinessActivity || gstInfo?.nba || '');
+        if (natureOfBusinessActivity) handleInputChange('buyer', 'natureOfBusinessActivity', natureOfBusinessActivity);
+
+        const lastUpdateDate = gstInfo?.lastUpdateDate || gstInfo?.lstupdt || '';
+        if (lastUpdateDate) handleInputChange('buyer', 'lastUpdateDate', lastUpdateDate);
+
+        // Jurisdiction fields
+        const stateJurisdiction = gstInfo?.stateJurisdiction || gstInfo?.stj || '';
+        if (stateJurisdiction) handleInputChange('buyer', 'stateJurisdiction', stateJurisdiction);
+        
+        const stateJurisdictionCode = gstInfo?.stateJurisdictionCode || gstInfo?.stjCd || '';
+        if (stateJurisdictionCode) handleInputChange('buyer', 'stateJurisdictionCode', stateJurisdictionCode);
+        
+        const centerJurisdiction = gstInfo?.centerJurisdiction || gstInfo?.ctj || '';
+        if (centerJurisdiction) handleInputChange('buyer', 'centerJurisdiction', centerJurisdiction);
+        
+        const centerJurisdictionCode = gstInfo?.centerJurisdictionCode || gstInfo?.ctjCd || '';
+        if (centerJurisdictionCode) handleInputChange('buyer', 'centerJurisdictionCode', centerJurisdictionCode);
+
+        if (pincode) handleInputChange('buyer', 'pincode', pincode);
         
         alert("GST details fetched successfully!");
       } else {

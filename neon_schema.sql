@@ -7,6 +7,21 @@ DROP TABLE IF EXISTS items CASCADE;
 DROP TABLE IF EXISTS invoices CASCADE;
 DROP TABLE IF EXISTS buyers CASCADE;
 DROP TABLE IF EXISTS sellers CASCADE;
+DROP TABLE IF EXISTS products CASCADE;
+
+-- Create Products table
+CREATE TABLE products (
+    "id" UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    "name" TEXT NOT NULL,
+    "description" TEXT,
+    "hsn" TEXT,
+    "sac" TEXT,
+    "unit" TEXT,
+    "rate" NUMERIC(15, 2) DEFAULT 0.00 NOT NULL,
+    "gstRate" NUMERIC(5, 2) DEFAULT 18.00 NOT NULL,
+    "createdAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    "updatedAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
 
 -- Create Sellers table
 CREATE TABLE sellers (
@@ -39,6 +54,24 @@ CREATE TABLE buyers (
     "stateCode" INTEGER,
     "buyerNumber" TEXT UNIQUE,
     "email" TEXT,
+    -- GST Business Details
+    "legalName" TEXT,
+    "tradeName" TEXT,
+    "constitutionOfBusiness" TEXT,
+    "taxType" TEXT,
+    "gstStatus" TEXT,
+    "registrationDate" TEXT,
+    "cancelledDate" TEXT,
+    "eInvoiceStatus" TEXT,
+    "natureOfBusinessActivity" TEXT,
+    "lastUpdateDate" TEXT,
+    -- GST Jurisdiction
+    "stateJurisdiction" TEXT,
+    "stateJurisdictionCode" TEXT,
+    "centerJurisdiction" TEXT,
+    "centerJurisdictionCode" TEXT,
+    -- Principal Address (structured)
+    "pincode" TEXT,
     "createdAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL,
     "updatedAt" TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP NOT NULL
 );

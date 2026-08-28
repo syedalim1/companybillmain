@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import * as XLSX from 'xlsx';
 
 export default function SavedInvoicesList({
   savedInvoices,
@@ -67,6 +68,34 @@ export default function SavedInvoicesList({
     return invoice.buyerName || invoice.buyer?.name || 'No Buyer';
   };
 
+  const handleExportList = () => {
+    if (filteredByMode.length === 0) {
+      alert("No data to export");
+      return;
+    }
+    
+    // Export what the user currently sees (or the whole mode list if no search)
+    const dataToExport = searchQuery.trim() ? filteredInvoices : filteredByMode;
+    
+    const exportData = dataToExport.map(inv => ({
+      'Date': inv.date ? new Date(inv.date).toLocaleDateString('en-GB') : '',
+      'Document No': currentMode === 'dc-bill' ? inv.dcNo : inv.invoiceNo,
+      'Customer Name': getBuyerName(inv),
+      'Customer GSTIN': inv.buyerGstin || inv.buyer?.gstin || '',
+      'Status': currentMode === 'dc-bill' ? inv.dcStatus : inv.paymentStatus,
+      'Taxable Amount': inv.subtotal || 0,
+      'Total Tax': (inv.cgstAmount || 0) + (inv.sgstAmount || 0) + (inv.igstAmount || 0),
+      'Grand Total': inv.grandTotal || 0
+    }));
+
+    const worksheet = XLSX.utils.json_to_sheet(exportData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, "Documents");
+    
+    const prefix = currentMode === 'gst-bill' ? 'GST_Invoices' : currentMode === 'quotation' ? 'Quotations' : currentMode === 'dc-bill' ? 'Delivery_Challans' : 'Slip_Bills';
+    XLSX.writeFile(workbook, `${prefix}_List.xlsx`);
+  };
+
   return (
     <div className="space-y-4">
       {/* Dynamic Header with Collapse and Search controls */}
@@ -91,24 +120,38 @@ export default function SavedInvoicesList({
           </span>
         </button>
 
-        {isOpen && filteredByMode.length > 0 && (
-          <button
-            onClick={() => {
-              setShowSearch(!showSearch);
-              if (showSearch) setSearchQuery(''); // Reset search on close
-            }}
-            className={`p-2 rounded-xl transition-all duration-200 flex items-center justify-center border cursor-pointer ${
-              showSearch
-                ? 'bg-brand-primary/10 border-brand-primary/30 text-brand-primary shadow-sm shadow-brand-primary/10'
-                : 'bg-white border-slate-200 text-slate-600 hover:text-brand-primary hover:border-brand-primary hover:shadow-sm'
-            }`}
-            title={showSearch ? "Close Search" : "Search Invoices"}
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {isOpen && filteredByMode.length > 0 && (
+            <>
+              <button
+                onClick={handleExportList}
+                className="p-2 rounded-xl transition-all duration-200 flex items-center justify-center border cursor-pointer bg-white border-slate-200 text-slate-600 hover:text-green-600 hover:border-green-600 hover:shadow-sm"
+                title="Export List to Excel"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path>
+                </svg>
+              </button>
+
+              <button
+                onClick={() => {
+                  setShowSearch(!showSearch);
+                  if (showSearch) setSearchQuery(''); // Reset search on close
+                }}
+                className={`p-2 rounded-xl transition-all duration-200 flex items-center justify-center border cursor-pointer ${
+                  showSearch
+                    ? 'bg-brand-primary/10 border-brand-primary/30 text-brand-primary shadow-sm shadow-brand-primary/10'
+                    : 'bg-white border-slate-200 text-slate-600 hover:text-brand-primary hover:border-brand-primary hover:shadow-sm'
+                }`}
+                title={showSearch ? "Close Search" : "Search Invoices"}
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {/* Collapsible content section */}

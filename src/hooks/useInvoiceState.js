@@ -113,7 +113,8 @@ export function useInvoiceState() {
   const [isSaving, setIsSaving] = useState(false); // Prevent double-save
   const [savedInvoices, setSavedInvoices] = useState([]); // State to store saved invoices
   const [editingInvoiceId, setEditingInvoiceId] = useState(null); // State to track editing invoice
-  const [nextInvoiceNo, setNextInvoiceNo] = useState('1'); // Next invoice number
+  const [nextInvoiceNo, setNextInvoiceNo] = useState('1'); // Next GST invoice number
+  const [nextQuotationNo, setNextQuotationNo] = useState('1'); // Next Quotation number
   const [nextDcNo, setNextDcNo] = useState('1'); // Next DC bill number
   const [nextSlipNo, setNextSlipNo] = useState('1'); // Next Slip bill number
   const [showEmailModal, setShowEmailModal] = useState(false); // State for email modal
@@ -152,27 +153,20 @@ export function useInvoiceState() {
   }, [currentMode]);
 
   // Update invoice/DC/Slip number when mode changes or next numbers update
-  // CRITICAL: Skip this entirely when editing — the loaded invoice number must be preserved
+  // Auto-update invoice number when entering a new creation mode
   useEffect(() => {
-    if (editingInvoiceId) return; // GUARD: Never overwrite when editing
-
-    if (currentMode === 'dc-bill') {
-      setInvoiceData(prev => ({
-        ...prev,
-        dcDetails: { ...prev.dcDetails, dcNo: nextDcNo }
-      }));
-    } else if (currentMode === 'slip-bill') {
-      setInvoiceData(prev => ({
-        ...prev,
-        invoiceDetails: { ...prev.invoiceDetails, invoiceNo: nextSlipNo }
-      }));
-    } else if (currentMode === 'gst-bill' || currentMode === 'quotation') {
-      setInvoiceData(prev => ({
-        ...prev,
-        invoiceDetails: { ...prev.invoiceDetails, invoiceNo: nextInvoiceNo }
-      }));
+    if (!editingInvoiceId) {
+      if (currentMode === 'gst-bill') {
+        setInvoiceData(prev => ({ ...prev, invoiceDetails: { ...prev.invoiceDetails, invoiceNo: nextInvoiceNo } }));
+      } else if (currentMode === 'quotation') {
+        setInvoiceData(prev => ({ ...prev, invoiceDetails: { ...prev.invoiceDetails, invoiceNo: nextQuotationNo } }));
+      } else if (currentMode === 'dc-bill') {
+        setInvoiceData(prev => ({ ...prev, dcDetails: { ...prev.dcDetails, dcNo: `DC-${nextDcNo}` } }));
+      } else if (currentMode === 'slip-bill') {
+        setInvoiceData(prev => ({ ...prev, invoiceDetails: { ...prev.invoiceDetails, invoiceNo: nextSlipNo } }));
+      }
     }
-  }, [currentMode, nextInvoiceNo, nextDcNo, nextSlipNo, editingInvoiceId]);
+  }, [currentMode, nextInvoiceNo, nextQuotationNo, nextDcNo, nextSlipNo, editingInvoiceId]);
 
   // --- IMMUTABLE input change handler ---
   // Bug 2 fix: Handle top-level fields (e.g., taxRate) where field is empty
@@ -250,6 +244,8 @@ export function useInvoiceState() {
     setEditingInvoiceId,
     nextInvoiceNo,
     setNextInvoiceNo,
+    nextQuotationNo,
+    setNextQuotationNo,
     nextDcNo,
     setNextDcNo,
     nextSlipNo,

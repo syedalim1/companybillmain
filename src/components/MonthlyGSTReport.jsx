@@ -77,6 +77,12 @@ const MonthlyGSTReport = ({ savedInvoices, invoiceData }) => {
     gstInvoices.forEach(invoice => {
       totalSales += invoice.grandTotal || 0;
 
+      const taxableAmount = invoice.subtotal || 0;
+      const totalGST = (invoice.cgstAmount || 0) + (invoice.sgstAmount || 0) + (invoice.igstAmount || 0);
+      const grandTotal = invoice.grandTotal || 0;
+      // Derive roundOff exactly as requested: saved value if exists, else diff
+      const roundOff = invoice.roundOff !== undefined ? invoice.roundOff : (grandTotal - (taxableAmount + totalGST));
+      
       // Invoice-wise breakdown
       invoiceBreakdown.push({
         invoiceNo: invoice.invoiceNo,
@@ -87,12 +93,14 @@ const MonthlyGSTReport = ({ savedInvoices, invoiceData }) => {
         buyerState: invoice.buyer?.state || 'N/A',
         buyerStateCode: invoice.buyer?.stateCode || 'N/A',
         buyerContact: invoice.buyer?.contact || 'N/A',
-        taxableValue: invoice.subtotal || 0,
+        placeOfSupply: invoice.placeOfSupply || invoice.buyer?.state || 'N/A',
+        taxableValue: taxableAmount,
         cgstAmount: invoice.cgstAmount || 0,
         sgstAmount: invoice.sgstAmount || 0,
         igstAmount: invoice.igstAmount || 0,
-        totalGST: (invoice.cgstAmount || 0) + (invoice.sgstAmount || 0) + (invoice.igstAmount || 0),
-        grandTotal: invoice.grandTotal || 0,
+        totalGST: totalGST,
+        roundOff: roundOff,
+        grandTotal: grandTotal,
       });
 
       // Buyer-wise breakdown
@@ -206,10 +214,10 @@ const MonthlyGSTReport = ({ savedInvoices, invoiceData }) => {
 
     // 2. Invoice Breakdown
     const invoiceSheetData = [
-        ['Invoice No', 'Date', 'Customer', 'GSTIN', 'Taxable', 'GST', 'Total'],
+        ['Invoice No', 'Date', 'Customer', 'GSTIN', 'Place of Supply', 'Taxable', 'CGST', 'SGST', 'IGST', 'Total GST', 'Round-Off', 'Grand Total'],
         ...monthlyData.invoiceBreakdown.map(inv => [
-            inv.invoiceNo, new Date(inv.date).toLocaleDateString(), inv.buyerName, inv.buyerGSTIN,
-            inv.taxableValue, inv.totalGST, inv.grandTotal
+            inv.invoiceNo, new Date(inv.date).toLocaleDateString(), inv.buyerName, inv.buyerGSTIN, inv.placeOfSupply,
+            inv.taxableValue, inv.cgstAmount, inv.sgstAmount, inv.igstAmount, inv.totalGST, inv.roundOff, inv.grandTotal
         ])
     ];
     const wsInvoices = XLSX.utils.aoa_to_sheet(invoiceSheetData);

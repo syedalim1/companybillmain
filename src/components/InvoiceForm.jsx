@@ -128,7 +128,7 @@ export default function InvoiceForm({
         <InvoiceDetailsForm
           invoiceData={invoiceData}
           handleInputChange={handleInputChange}
-          hideBillNumber={currentMode === 'quotation'}
+          hideBillNumber={false}
           currentMode={currentMode}
         />
 

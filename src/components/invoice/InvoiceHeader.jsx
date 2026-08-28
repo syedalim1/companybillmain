@@ -39,7 +39,7 @@ const InvoiceHeader = ({ copyType, invoiceData, mode }) => {
                 {/* Invoice Number & Date */}
                 <div className="flex justify-between text-xs px-1">
                     <span>
-                        
+                        <span className="font-bold">Slip No:</span> {invoiceData.invoiceDetails.invoiceNo}
                     </span>
                     <span><span className="font-bold">Date:</span> {new Date(invoiceData.invoiceDetails.date).toLocaleDateString('en-GB')}</span>
                 </div>
@@ -83,10 +83,12 @@ const InvoiceHeader = ({ copyType, invoiceData, mode }) => {
                             <span className="font-bold">DC No:</span> {invoiceData.dcDetails?.dcNo || 'DC-001'}
                         </p>
                     )}
-                    {/* Invoice Number for GST Bill */}
-                    {!isQuotation && !isDcBill && (
-                    <p className=" font-semibold text-[15px]">
-                            <span className="font-bold">Invoice No:</span> {invoiceData.invoiceDetails.invoiceNo}
+                    {/* Document Number for non-DC modes */}
+                    {!isDcBill && (
+                        <p className=" font-semibold text-[15px]">
+                            <span className="font-bold">
+                                {isQuotation ? 'Quotation No:' : (copyType === 'slip' ? 'Slip Bill No:' : 'Invoice No:')}
+                            </span> {invoiceData.invoiceDetails.invoiceNo}
                         </p>
                     )}
                     <div className="text-md text-[15px]">

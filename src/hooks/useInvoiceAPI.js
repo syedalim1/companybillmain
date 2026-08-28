@@ -15,6 +15,7 @@ export function useInvoiceAPI(
   setEditingInvoiceId,
   setSavedInvoices,
   setNextInvoiceNo,
+  setNextQuotationNo,
   setNextDcNo,
   setNextSlipNo,
   setCurrentMode,
@@ -37,6 +38,9 @@ export function useInvoiceAPI(
         setSavedInvoices(data.invoices || []);
         // Server is the SINGLE SOURCE OF TRUTH for next numbers
         setNextInvoiceNo(data.nextInvoiceNo?.toString() || '1');
+        if (setNextQuotationNo) {
+          setNextQuotationNo(data.nextQuotationNo?.toString() || '1');
+        }
         if (setNextDcNo) {
           setNextDcNo(data.nextDcNo?.toString() || '1');
         }
@@ -47,7 +51,7 @@ export function useInvoiceAPI(
     } catch (error) {
       console.error('Error fetching invoices:', error);
     }
-  }, [setSavedInvoices, setNextInvoiceNo, setNextDcNo, setNextSlipNo]);
+  }, [setSavedInvoices, setNextInvoiceNo, setNextQuotationNo, setNextDcNo, setNextSlipNo]);
 
   // Load saved invoices on component mount
   useEffect(() => {
@@ -434,6 +438,7 @@ export function useInvoiceAPI(
         alert('Invoice deleted successfully!');
         // Update next numbers from server response
         if (result.nextInvoiceNo) setNextInvoiceNo(result.nextInvoiceNo.toString());
+        if (result.nextQuotationNo && setNextQuotationNo) setNextQuotationNo(result.nextQuotationNo.toString());
         if (result.nextDcNo && setNextDcNo) setNextDcNo(result.nextDcNo.toString());
         if (result.nextSlipNo && setNextSlipNo) setNextSlipNo(result.nextSlipNo.toString());
         // Re-fetch to ensure consistency

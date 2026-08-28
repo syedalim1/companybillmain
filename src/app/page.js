@@ -47,6 +47,8 @@ export default function Home() {
     setEditingInvoiceId,
     nextInvoiceNo,
     setNextInvoiceNo,
+    nextQuotationNo,
+    setNextQuotationNo,
     nextDcNo,
     setNextDcNo,
     nextSlipNo,
@@ -80,6 +82,7 @@ export default function Home() {
     setEditingInvoiceId,
     setSavedInvoices,
     setNextInvoiceNo,
+    setNextQuotationNo,
     setNextDcNo,
     setNextSlipNo,
     setCurrentMode,
@@ -106,12 +109,11 @@ export default function Home() {
   // Export to Excel (dynamically imported for performance)
   const handleExportToExcel = async () => {
     const XLSX = (await import('xlsx'));
-    const { subtotal, cgstAmount, sgstAmount, igstAmount, grandTotal } = calculations;
+    const { subtotal, cgstAmount, sgstAmount, igstAmount, grandTotal, amountInWords } = calculations;
 
     const data = [
-      // Invoice Details
-      ['Invoice Details'],
-      ['Invoice No', invoiceData.invoiceDetails.invoiceNo],
+      [currentMode === 'dc-bill' ? 'Delivery Challan Details' : (currentMode === 'slip-bill' ? 'Slip Bill Details' : (currentMode === 'quotation' ? 'Quotation Details' : 'Invoice Details'))],
+      ['Document No', currentMode === 'dc-bill' ? invoiceData.dcDetails.dcNo : invoiceData.invoiceDetails.invoiceNo],
       ['Date', invoiceData.invoiceDetails.date],
       ['Due Date', invoiceData.invoiceDetails.dueDate],
       ['PO Number', invoiceData.invoiceDetails.poNumber],
@@ -177,12 +179,16 @@ export default function Home() {
       ['SGST', sgstAmount.toFixed(2)],
       ['IGST', igstAmount.toFixed(2)],
       ['Grand Total', grandTotal.toFixed(2)],
+      ['Amount in Words', amountInWords],
     ];
 
     const ws = XLSX.utils.aoa_to_sheet(data);
     const wb = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(wb, ws, 'Invoice');
-    XLSX.writeFile(wb, `Invoice_${invoiceData.invoiceDetails.invoiceNo || 'NoNumber'}.xlsx`);
+    const sheetName = currentMode === 'dc-bill' ? 'Delivery Challan' : (currentMode === 'quotation' ? 'Quotation' : (currentMode === 'slip-bill' ? 'Slip Bill' : 'Invoice'));
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+    
+    const docNo = currentMode === 'dc-bill' ? (invoiceData.dcDetails?.dcNo || 'NoNumber') : (invoiceData.invoiceDetails?.invoiceNo || 'NoNumber');
+    XLSX.writeFile(wb, `${sheetName}_${docNo}.xlsx`.replace(' ', '_'));
   };
 
 
@@ -202,9 +208,12 @@ const handleGeneratePDF = async () => {
     const html2pdf = (await import('html2pdf.js')).default;
 
 
+    const docNo = currentMode === 'dc-bill' ? (invoiceData.dcDetails?.dcNo || 'NoNumber') : (invoiceData.invoiceDetails?.invoiceNo || 'NoNumber');
+    const docPrefix = currentMode === 'dc-bill' ? 'DC' : (currentMode === 'quotation' ? 'Quotation' : (currentMode === 'slip-bill' ? 'Slip_Bill' : 'Invoice'));
+
     const options = {
       margin: [0.2, 0.2, 0.2, 0.2], // top, left, bottom, right margins in inches
-      filename: `Invoice_${invoiceData.invoiceDetails.invoiceNo}.pdf`,
+      filename: `${docPrefix}_${docNo}.pdf`,
       image: { type: 'jpeg', quality: 0.95 },
       html2canvas: {
         scale: 1.2, // Further reduced scale for better compatibility
@@ -268,7 +277,7 @@ const handleGeneratePDF = async () => {
     return <LoginScreen onLoginSuccess={() => setAuthenticated(true)} />;
   }
 
-  const { subtotal, cgstAmount, sgstAmount, igstAmount, grandTotal, lessAmount, discountAmount } = calculations;
+  const { subtotal, cgstAmount, sgstAmount, igstAmount, grandTotal, lessAmount, discountAmount, amountInWords } = calculations;
 
   // Show landing page
   if (currentMode === 'landing') {
@@ -378,6 +387,7 @@ const handleGeneratePDF = async () => {
         grandTotal={grandTotal}
         lessAmount={lessAmount}
         discountAmount={discountAmount}
+        amountInWords={amountInWords}
         mode={currentMode}
         gstOption={quotationGstOption}
       />

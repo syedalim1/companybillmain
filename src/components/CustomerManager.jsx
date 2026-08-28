@@ -58,7 +58,22 @@ const CustomerManager = () => {
     stateCode: '',
     contact: '',
     buyerNumber: '',
-    email: ''
+    email: '',
+    legalName: '',
+    tradeName: '',
+    constitutionOfBusiness: '',
+    taxType: '',
+    gstStatus: '',
+    registrationDate: '',
+    cancelledDate: '',
+    eInvoiceStatus: '',
+    natureOfBusinessActivity: '',
+    lastUpdateDate: '',
+    stateJurisdiction: '',
+    stateJurisdictionCode: '',
+    centerJurisdiction: '',
+    centerJurisdictionCode: '',
+    pincode: '',
   });
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
@@ -86,33 +101,67 @@ const CustomerManager = () => {
         gstInfo = data.data[0];
       }
       
-      const legalName = gstInfo?.tradeName || gstInfo?.legalName || gstInfo?.lgnm || "";
+      // --- Map GST response fields ---
+      const legalName = gstInfo?.legalName || gstInfo?.lgnm || '';
+      const tradeName = gstInfo?.tradeName || gstInfo?.tradeNam || '';
+      const displayName = tradeName || legalName;
       
-      let address = "";
+      // Build full address from principal address object
+      let address = '';
+      let pincode = '';
       if (gstInfo?.principalAddress?.address) {
-        const addrObj = gstInfo.principalAddress.address;
-        address = [addrObj.buildingNumber, addrObj.street, addrObj.location, addrObj.district, addrObj.pincode].filter(Boolean).join(', ');
+        const a = gstInfo.principalAddress.address;
+        address = [a.buildingNumber, a.buildingName, a.floorNumber, a.street, a.location, a.locality, a.district, a.stateCode, a.pincode].filter(Boolean).join(', ');
+        pincode = a.pincode || '';
       } else {
-        address = gstInfo?.pradr?.adr || gstInfo?.pradr?.addr?.bno || gstInfo?.address || "";
+        address = gstInfo?.pradr?.adr || gstInfo?.pradr?.addr?.bno || gstInfo?.address || '';
       }
+      
       const stateCode = parseInt(gstin.substring(0, 2), 10);
+      const stateName = gstInfo?.principalAddress?.address?.stateCode || gstInfo?.state || getStateFromGstin(gstin)?.name || '';
+
+      // Build the GST fields object
+      const gstFields = {
+        name: displayName,
+        address: address,
+        state: stateName,
+        stateCode: isNaN(stateCode) ? null : stateCode,
+        legalName: legalName,
+        tradeName: tradeName,
+        constitutionOfBusiness: gstInfo?.constitutionOfBusiness || gstInfo?.ctb || '',
+        taxType: gstInfo?.taxType || gstInfo?.dty || '',
+        gstStatus: gstInfo?.status || gstInfo?.sts || '',
+        registrationDate: gstInfo?.registrationDate || gstInfo?.rgdt || '',
+        cancelledDate: gstInfo?.cancelledDate || gstInfo?.cxdt || '',
+        eInvoiceStatus: gstInfo?.eInvoiceStatus || gstInfo?.einvoiceStatus || '',
+        natureOfBusinessActivity: Array.isArray(gstInfo?.natureOfBusinessActivity)
+          ? gstInfo.natureOfBusinessActivity.join(', ')
+          : (gstInfo?.natureOfBusinessActivity || gstInfo?.nba || ''),
+        lastUpdateDate: gstInfo?.lastUpdateDate || gstInfo?.lstupdt || '',
+        stateJurisdiction: gstInfo?.stateJurisdiction || gstInfo?.stj || '',
+        stateJurisdictionCode: gstInfo?.stateJurisdictionCode || gstInfo?.stjCd || '',
+        centerJurisdiction: gstInfo?.centerJurisdiction || gstInfo?.ctj || '',
+        centerJurisdictionCode: gstInfo?.centerJurisdictionCode || gstInfo?.ctjCd || '',
+        pincode: pincode,
+      };
       
       if (isEditing) {
         setEditingBuyer(prev => ({
           ...prev,
-          name: legalName || prev.name,
-          address: address || prev.address,
-          stateCode: isNaN(stateCode) ? prev.stateCode : stateCode
+          ...gstFields,
+          name: gstFields.name || prev.name,
+          address: gstFields.address || prev.address,
         }));
       } else {
-        handleNewBuyerChange("name", legalName || newBuyer.name);
-        handleNewBuyerChange("address", address || newBuyer.address);
-        if (!isNaN(stateCode)) {
-          handleNewBuyerChange("stateCode", stateCode);
-        }
+        setNewBuyer(prev => ({
+          ...prev,
+          ...gstFields,
+          name: gstFields.name || prev.name,
+          address: gstFields.address || prev.address,
+        }));
       }
       
-      if (!legalName) {
+      if (!displayName) {
         alert("Could not extract company name from GST response.");
       }
     } catch (error) {
@@ -161,6 +210,21 @@ const CustomerManager = () => {
       gstin: buyer.gstin || '',
       email: buyer.email || '',
       buyerNumber: buyer.buyerNumber || '',
+      legalName: buyer.legalName || '',
+      tradeName: buyer.tradeName || '',
+      constitutionOfBusiness: buyer.constitutionOfBusiness || '',
+      taxType: buyer.taxType || '',
+      gstStatus: buyer.gstStatus || '',
+      registrationDate: buyer.registrationDate || '',
+      cancelledDate: buyer.cancelledDate || '',
+      eInvoiceStatus: buyer.eInvoiceStatus || '',
+      natureOfBusinessActivity: buyer.natureOfBusinessActivity || '',
+      lastUpdateDate: buyer.lastUpdateDate || '',
+      stateJurisdiction: buyer.stateJurisdiction || '',
+      stateJurisdictionCode: buyer.stateJurisdictionCode || '',
+      centerJurisdiction: buyer.centerJurisdiction || '',
+      centerJurisdictionCode: buyer.centerJurisdictionCode || '',
+      pincode: buyer.pincode || '',
     });
   };
 
@@ -222,7 +286,22 @@ const CustomerManager = () => {
           stateCode: '',
           contact: '',
           buyerNumber: '',
-          email: ''
+          email: '',
+          legalName: '',
+          tradeName: '',
+          constitutionOfBusiness: '',
+          taxType: '',
+          gstStatus: '',
+          registrationDate: '',
+          cancelledDate: '',
+          eInvoiceStatus: '',
+          natureOfBusinessActivity: '',
+          lastUpdateDate: '',
+          stateJurisdiction: '',
+          stateJurisdictionCode: '',
+          centerJurisdiction: '',
+          centerJurisdictionCode: '',
+          pincode: '',
         });
         fetchBuyers();
       } else {
@@ -363,8 +442,20 @@ const CustomerManager = () => {
                 </div>
                 <div>
                   <h3 className="font-semibold text-gray-900">{buyer.name}</h3>
-                  <div className="text-xs text-gray-500 font-mono bg-gray-100 px-2 py-0.5 rounded mt-1 inline-block">
-                    {buyer.gstin || "No GSTIN"}
+                  {buyer.tradeName && buyer.tradeName !== buyer.name && (
+                    <div className="text-xs text-gray-500 mt-0.5">{buyer.tradeName}</div>
+                  )}
+                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                    <span className="text-xs text-gray-500 font-mono bg-gray-100 px-2 py-0.5 rounded">
+                      {buyer.gstin || "No GSTIN"}
+                    </span>
+                    {buyer.gstStatus && (
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded ${
+                        buyer.gstStatus.toLowerCase() === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                      }`}>
+                        {buyer.gstStatus}
+                      </span>
+                    )}
                   </div>
                 </div>
               </div>
@@ -432,11 +523,21 @@ const CustomerManager = () => {
                 <tr key={buyer.id} className="hover:bg-white transition-colors">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm font-medium text-gray-900">{buyer.name}</div>
+                    {buyer.tradeName && buyer.tradeName !== buyer.name && (
+                      <div className="text-xs text-gray-400">{buyer.tradeName}</div>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm font-mono text-gray-600 bg-gray-100 px-2 py-0.5 rounded inline-block">
                       {buyer.gstin || "N/A"}
                     </div>
+                    {buyer.gstStatus && (
+                      <div className={`text-xs font-semibold mt-1 px-2 py-0.5 rounded inline-block ${
+                        buyer.gstStatus.toLowerCase() === 'active' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                      }`}>
+                        {buyer.gstStatus}
+                      </div>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="text-sm text-gray-600">{buyer.contact || "N/A"}</div>

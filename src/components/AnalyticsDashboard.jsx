@@ -130,27 +130,32 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
 
     // DOCUMENT COUNTS (Include Unpaid Quotes as they are documents)
     const paymentStats = {
-      paid: typeFilteredInvoices.filter(inv => inv.paymentStatus === 'paid').length,
-      partial: typeFilteredInvoices.filter(inv => inv.paymentStatus === 'partial').length,
-      unpaid: typeFilteredInvoices.filter(inv => inv.paymentStatus === 'unpaid' || !inv.paymentStatus).length,
-      overdue: typeFilteredInvoices.filter(inv => inv.paymentStatus === 'overdue').length,
+      paid: validRevenueInvoices.filter(inv => inv.paymentStatus === 'paid').length,
+      partial: validRevenueInvoices.filter(inv => inv.paymentStatus === 'partial').length,
+      unpaid: validRevenueInvoices.filter(inv => inv.paymentStatus === 'unpaid' || !inv.paymentStatus).length,
+      overdue: validRevenueInvoices.filter(inv => inv.paymentStatus === 'overdue').length,
     };
     
-    // REVENUE FILTER: Exclude Unpaid Quotations AND DC Bills from Financial Metrics
+    // REVENUE FILTER: Exclude Quotations AND DC Bills from Financial Metrics strictly
     const validRevenueInvoices = typeFilteredInvoices.filter(inv => {
-        // DC Bills are always excluded from revenue (no tax invoice)
-        if (inv.mode === 'dc-bill') return false;
-        if (inv.mode === 'quotation') {
-            return inv.paymentStatus === 'paid'; // Only PAID quotations count as revenue
+        // If we are on 'all' tab or 'gst-bills' tab, ONLY count gst-bill revenue
+        if (activeTab === 'all' || activeTab === 'gst-bills') {
+            return inv.mode === 'gst-bill';
         }
-        // GST bills and Slip bills count as revenue
-        // (Assuming slip bills are effectively cash bills or valid receivables)
-        return true; 
+        // If we are explicitly looking at Slip Bills, count slip-bill revenue
+        if (activeTab === 'slip-bills') {
+            return inv.mode === 'slip-bill';
+        }
+        // If we are explicitly looking at Quotations, count quotation revenue
+        if (activeTab === 'quotations') {
+            return inv.mode === 'quotation';
+        }
+        return false;
     });
 
-    const paidAmount = typeFilteredInvoices.filter(inv => inv.paymentStatus === 'paid').reduce((sum, inv) => sum + (inv.grandTotal || 0), 0);
+    const paidAmount = validRevenueInvoices.filter(inv => inv.paymentStatus === 'paid').reduce((sum, inv) => sum + (inv.grandTotal || 0), 0);
     // Keep pending amount logic as-is (shows what is outstanding, even for quotes)
-    const pendingAmount = typeFilteredInvoices.filter(inv => inv.paymentStatus !== 'paid').reduce((sum, inv) => sum + (inv.grandTotal || 0), 0);
+    const pendingAmount = validRevenueInvoices.filter(inv => inv.paymentStatus !== 'paid').reduce((sum, inv) => sum + (inv.grandTotal || 0), 0);
     
     // If no filtered documents at all
     if (typeFilteredInvoices.length === 0) {

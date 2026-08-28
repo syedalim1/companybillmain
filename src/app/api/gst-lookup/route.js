@@ -23,8 +23,12 @@ export async function GET(request) {
     if (apiKey.includes('msh') || process.env.RAPIDAPI_HOST) {
       const rapidApiHost = process.env.RAPIDAPI_HOST || 'gst-insights-api.p.rapidapi.com'; 
       
-      // The specific RapidAPI endpoint for gst-insights-api
-      apiUrl = `https://${rapidApiHost}/getGSTDetailsUsingGST/${gstin}`; 
+      // Build the correct endpoint based on the API host
+      if (rapidApiHost.includes('powerful-gstin-tool')) {
+        apiUrl = `https://${rapidApiHost}/v1/gstin/${gstin}`;
+      } else {
+        apiUrl = `https://${rapidApiHost}/getGSTDetailsUsingGST/${gstin}`;
+      }
       
       headers = {
         'x-rapidapi-key': apiKey,

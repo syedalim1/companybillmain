@@ -1,4 +1,15 @@
 import { useMemo } from 'react';
+import { ToWords } from 'to-words';
+
+const toWords = new ToWords({
+  localeCode: 'en-IN',
+  converterOptions: {
+    currency: true,
+    ignoreDecimal: false,
+    ignoreZeroCurrency: false,
+    doNotAddOnly: false,
+  }
+});
 
 export function useInvoiceCalculations(
   invoiceData,
@@ -53,6 +64,9 @@ export function useInvoiceCalculations(
     const taxAmount = cgstAmount + sgstAmount + igstAmount;
     const grandTotal = taxableAmount + taxAmount;
 
+    // Centralized amount in words calculation that respects exact decimal precision
+    const amountInWords = grandTotal > 0 ? toWords.convert(grandTotal) : 'Zero';
+
     return {
       itemTotal,
       subtotal,
@@ -64,6 +78,7 @@ export function useInvoiceCalculations(
       grandTotal,
       lessAmount,
       discountAmount,
+      amountInWords,
     };
   }, [invoiceData, currentMode, quotationGstOption]);
 }

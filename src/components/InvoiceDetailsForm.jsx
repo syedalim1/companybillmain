@@ -24,15 +24,17 @@ const InvoiceDetailsForm = ({ invoiceData, handleInputChange, hideBillNumber = f
             />
           </div>
         )}
-        {/* Invoice Number field for non-DC modes */}
+        {/* Invoice/Quotation Number field for non-DC modes */}
         {!hideBillNumber && !isDcBill && (
           <div>
-            <label className="block text-xs font-medium text-gray-500 mb-1 ml-1">Invoice No</label>
+            <label className="block text-xs font-medium text-gray-500 mb-1 ml-1">
+              {currentMode === 'quotation' ? 'Quotation No' : (currentMode === 'slip-bill' ? 'Slip Bill No' : 'Invoice No')}
+            </label>
             <input
                 type="text"
                 value={invoiceData.invoiceDetails.invoiceNo}
                 onChange={(e) => handleInputChange('invoiceDetails', 'invoiceNo', e.target.value)}
-                placeholder="INV-001"
+                placeholder={currentMode === 'quotation' ? 'QTN-001' : 'INV-001'}
                 className="w-full p-3 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/50 transition-all font-mono"
             />
           </div>

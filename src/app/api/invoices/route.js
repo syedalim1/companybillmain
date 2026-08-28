@@ -1,13 +1,13 @@
 import { NextResponse } from 'next/server';
-import { supabase } from '@/lib/supabase';
+import { query, isDbConfigured } from '@/lib/db';
 
 // ============================================================================
 // HELPERS
 // ============================================================================
 
-// Guard: return 503 if Supabase is not configured (Bug 12 fix)
-function guardSupabase() {
-  if (!supabase) {
+// Guard: return 503 if database is not configured
+function guardDB() {
+  if (!isDbConfigured()) {
     return NextResponse.json(
       { error: 'Database not configured. Please check environment variables.' },
       { status: 503 }
@@ -25,30 +25,24 @@ function safeParseInt(val) {
 }
 
 /**
- * Safely extract the additional charges object, supporting both 1:1 nested object or single-item array representations.
- */
-function getAdditionalCharges(charges) {
-  if (!charges) return null;
-  return Array.isArray(charges) ? (charges[0] || null) : charges;
-}
-
-/**
- * Calculate the next invoice/DC/slip numbers from the database.
- * Single source of truth — clients must trust these values.
+ * Calculate the next invoice/DC/quotation/slip numbers from the database.
+ * Completely independent numbering for each document type.
  */
 async function getNextNumbers() {
-  const { data: invoices, error } = await supabase
-    .from('invoices')
-    .select('invoiceNo, dcNo, mode');
-
-  if (error) throw error;
+  const invoices = await query('SELECT "invoiceNo", "dcNo", mode FROM invoices');
   const invoiceList = invoices || [];
 
-  // Next invoice number (for gst-bill, quotation, and any non-dc/non-slip modes)
-  const invoiceNos = invoiceList
-    .filter((inv) => inv.mode !== 'dc-bill' && inv.mode !== 'slip-bill')
+  // Next GST Invoice number
+  const gstNos = invoiceList
+    .filter((inv) => inv.mode === 'gst-bill')
     .map((inv) => safeParseInt(inv.invoiceNo));
-  const maxInvoiceNo = invoiceNos.length > 0 ? Math.max(...invoiceNos) : 0;
+  const maxGstNo = gstNos.length > 0 ? Math.max(...gstNos) : 0;
+
+  // Next Quotation number
+  const quotationNos = invoiceList
+    .filter((inv) => inv.mode === 'quotation')
+    .map((inv) => safeParseInt(inv.invoiceNo));
+  const maxQuotationNo = quotationNos.length > 0 ? Math.max(...quotationNos) : 0;
 
   // Next DC number
   const dcNos = invoiceList
@@ -63,7 +57,8 @@ async function getNextNumbers() {
   const maxSlipNo = slipNos.length > 0 ? Math.max(...slipNos) : 0;
 
   return {
-    nextInvoiceNo: maxInvoiceNo + 1,
+    nextInvoiceNo: maxGstNo + 1,
+    nextQuotationNo: maxQuotationNo + 1,
     nextDcNo: maxDcNo + 1,
     nextSlipNo: maxSlipNo + 1,
   };
@@ -74,19 +69,13 @@ async function getNextNumbers() {
  */
 async function findOrCreateSeller(sellerData) {
   if (sellerData.gstin) {
-    const { data: existing, error } = await supabase
-      .from('sellers')
-      .select('*')
-      .eq('gstin', sellerData.gstin)
-      .limit(1)
-      .maybeSingle();
-
-    if (error) throw error;
-    if (existing) return existing;
+    const rows = await query('SELECT * FROM sellers WHERE "gstin" = $1 LIMIT 1', [sellerData.gstin]);
+    if (rows.length > 0) return rows[0];
   }
 
+  const id = crypto.randomUUID();
   const newSeller = {
-    id: crypto.randomUUID(),
+    id,
     name: sellerData.name || '',
     address: sellerData.address || '',
     gstin: sellerData.gstin || '',
@@ -101,14 +90,13 @@ async function findOrCreateSeller(sellerData) {
     logo: sellerData.logo || null,
   };
 
-  const { data: created, error: createError } = await supabase
-    .from('sellers')
-    .insert([newSeller])
-    .select()
-    .single();
-
-  if (createError) throw createError;
-  return created;
+  const rows = await query(
+    `INSERT INTO sellers ("id", "name", "address", "gstin", "state", "stateCode", "contact", "email", "bankName", "accNo", "branch", "ifsc", "logo")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+     RETURNING *`,
+    [newSeller.id, newSeller.name, newSeller.address, newSeller.gstin, newSeller.state, newSeller.stateCode, newSeller.contact, newSeller.email, newSeller.bankName, newSeller.accNo, newSeller.branch, newSeller.ifsc, newSeller.logo]
+  );
+  return rows[0];
 }
 
 /**
@@ -117,33 +105,20 @@ async function findOrCreateSeller(sellerData) {
 async function findOrCreateBuyer(buyerData) {
   // Try to find by GSTIN first (if provided and non-empty)
   if (buyerData.gstin && buyerData.gstin.trim() !== '') {
-    const { data: existing, error } = await supabase
-      .from('buyers')
-      .select('*')
-      .eq('gstin', buyerData.gstin)
-      .limit(1)
-      .maybeSingle();
-
-    if (error) throw error;
-    if (existing) return existing;
+    const rows = await query('SELECT * FROM buyers WHERE "gstin" = $1 LIMIT 1', [buyerData.gstin]);
+    if (rows.length > 0) return rows[0];
   }
 
   // Try to find by name if no GSTIN match
   if (buyerData.name && buyerData.name.trim() !== '') {
-    const { data: existingByName, error } = await supabase
-      .from('buyers')
-      .select('*')
-      .eq('name', buyerData.name)
-      .limit(1)
-      .maybeSingle();
-
-    if (error) throw error;
-    if (existingByName) return existingByName;
+    const rows = await query('SELECT * FROM buyers WHERE "name" = $1 LIMIT 1', [buyerData.name]);
+    if (rows.length > 0) return rows[0];
   }
 
   // Create new buyer
+  const id = crypto.randomUUID();
   const newBuyer = {
-    id: crypto.randomUUID(),
+    id,
     name: buyerData.name || '',
     address: buyerData.address || '',
     destination: buyerData.destination || '',
@@ -153,16 +128,36 @@ async function findOrCreateBuyer(buyerData) {
     stateCode: buyerData.stateCode || null,
     buyerNumber: buyerData.buyerNumber || null,
     email: buyerData.email || null,
+    legalName: buyerData.legalName || null,
+    tradeName: buyerData.tradeName || null,
+    constitutionOfBusiness: buyerData.constitutionOfBusiness || null,
+    taxType: buyerData.taxType || null,
+    gstStatus: buyerData.gstStatus || null,
+    registrationDate: buyerData.registrationDate || null,
+    cancelledDate: buyerData.cancelledDate || null,
+    eInvoiceStatus: buyerData.eInvoiceStatus || null,
+    natureOfBusinessActivity: buyerData.natureOfBusinessActivity || null,
+    lastUpdateDate: buyerData.lastUpdateDate || null,
+    stateJurisdiction: buyerData.stateJurisdiction || null,
+    stateJurisdictionCode: buyerData.stateJurisdictionCode || null,
+    centerJurisdiction: buyerData.centerJurisdiction || null,
+    centerJurisdictionCode: buyerData.centerJurisdictionCode || null,
+    pincode: buyerData.pincode || null,
   };
 
-  const { data: created, error: createError } = await supabase
-    .from('buyers')
-    .insert([newBuyer])
-    .select()
-    .single();
-
-  if (createError) throw createError;
-  return created;
+  const rows = await query(
+    `INSERT INTO buyers ("id", "name", "address", "destination", "contact", "gstin", "state", "stateCode", "buyerNumber", "email",
+      "legalName", "tradeName", "constitutionOfBusiness", "taxType", "gstStatus", "registrationDate",
+      "cancelledDate", "eInvoiceStatus", "natureOfBusinessActivity", "lastUpdateDate",
+      "stateJurisdiction", "stateJurisdictionCode", "centerJurisdiction", "centerJurisdictionCode", "pincode")
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
+     RETURNING *`,
+    [newBuyer.id, newBuyer.name, newBuyer.address, newBuyer.destination, newBuyer.contact, newBuyer.gstin, newBuyer.state, newBuyer.stateCode, newBuyer.buyerNumber, newBuyer.email,
+     newBuyer.legalName, newBuyer.tradeName, newBuyer.constitutionOfBusiness, newBuyer.taxType, newBuyer.gstStatus, newBuyer.registrationDate,
+     newBuyer.cancelledDate, newBuyer.eInvoiceStatus, newBuyer.natureOfBusinessActivity, newBuyer.lastUpdateDate,
+     newBuyer.stateJurisdiction, newBuyer.stateJurisdictionCode, newBuyer.centerJurisdiction, newBuyer.centerJurisdictionCode, newBuyer.pincode]
+  );
+  return rows[0];
 }
 
 /**
@@ -197,12 +192,88 @@ function buildSnapshotFields(data) {
   };
 }
 
+/**
+ * Fetch a full invoice by ID with all related data (seller, buyer, items, additional charges).
+ * Assembles a full invoice object with related data using separate queries.
+ */
+async function fetchFullInvoice(invoiceId) {
+  const invoiceRows = await query('SELECT * FROM invoices WHERE "id" = $1', [invoiceId]);
+  if (invoiceRows.length === 0) return null;
+
+  const invoice = invoiceRows[0];
+
+  // Fetch related data in parallel
+  const [sellerRows, buyerRows, itemRows, chargeRows] = await Promise.all([
+    query('SELECT * FROM sellers WHERE "id" = $1', [invoice.sellerId]),
+    query('SELECT * FROM buyers WHERE "id" = $1', [invoice.buyerId]),
+    query('SELECT * FROM items WHERE "invoiceId" = $1', [invoiceId]),
+    query('SELECT * FROM additional_charges WHERE "invoiceId" = $1', [invoiceId]),
+  ]);
+
+  return {
+    ...invoice,
+    seller: sellerRows[0] || null,
+    buyer: buyerRows[0] || null,
+    items: itemRows || [],
+    additionalCharges: chargeRows[0] || null,
+  };
+}
+
+/**
+ * Fetch all invoices with related data.
+ */
+async function fetchAllInvoices() {
+  const invoiceRows = await query('SELECT * FROM invoices ORDER BY "createdAt" DESC');
+
+  if (!invoiceRows || invoiceRows.length === 0) return [];
+
+  // Collect all unique seller/buyer IDs
+  const sellerIds = [...new Set(invoiceRows.map(inv => inv.sellerId).filter(Boolean))];
+  const buyerIds = [...new Set(invoiceRows.map(inv => inv.buyerId).filter(Boolean))];
+  const invoiceIds = invoiceRows.map(inv => inv.id);
+
+  // Batch fetch related data
+  const [sellers, buyers, items, charges] = await Promise.all([
+    sellerIds.length > 0
+      ? query(`SELECT * FROM sellers WHERE "id" = ANY($1)`, [sellerIds])
+      : [],
+    buyerIds.length > 0
+      ? query(`SELECT * FROM buyers WHERE "id" = ANY($1)`, [buyerIds])
+      : [],
+    invoiceIds.length > 0
+      ? query(`SELECT * FROM items WHERE "invoiceId" = ANY($1)`, [invoiceIds])
+      : [],
+    invoiceIds.length > 0
+      ? query(`SELECT * FROM additional_charges WHERE "invoiceId" = ANY($1)`, [invoiceIds])
+      : [],
+  ]);
+
+  // Build lookup maps
+  const sellerMap = new Map(sellers.map(s => [s.id, s]));
+  const buyerMap = new Map(buyers.map(b => [b.id, b]));
+  const itemsMap = new Map();
+  for (const item of items) {
+    if (!itemsMap.has(item.invoiceId)) itemsMap.set(item.invoiceId, []);
+    itemsMap.get(item.invoiceId).push(item);
+  }
+  const chargesMap = new Map(charges.map(c => [c.invoiceId, c]));
+
+  // Assemble full invoices
+  return invoiceRows.map(inv => ({
+    ...inv,
+    seller: sellerMap.get(inv.sellerId) || null,
+    buyer: buyerMap.get(inv.buyerId) || null,
+    items: itemsMap.get(inv.id) || [],
+    additionalCharges: chargesMap.get(inv.id) || null,
+  }));
+}
+
 
 // ============================================================================
 // POST — Create a new invoice
 // ============================================================================
 export async function POST(request) {
-  const guard = guardSupabase();
+  const guard = guardDB();
   if (guard) return guard;
 
   try {
@@ -220,30 +291,33 @@ export async function POST(request) {
     const invoiceNo = data.invoiceDetails.invoiceNo;
     const mode = data.mode || 'gst-bill';
 
-    if (invoiceNo && mode !== 'dc-bill') {
-      let query = supabase.from('invoices').select('id, invoiceNo, mode').eq('invoiceNo', invoiceNo);
-
-      if (mode === 'slip-bill') {
-        query = query.eq('mode', 'slip-bill');
-      } else {
-        query = query.neq('mode', 'slip-bill');
-      }
-
-      const { data: duplicate, error: dupError } = await query.limit(1).maybeSingle();
-      if (dupError) throw dupError;
-
-      if (duplicate) {
-        if (mode === 'slip-bill') {
+    if (mode === 'dc-bill') {
+      const dcNo = data.dcDetails?.dcNo;
+      if (dcNo) {
+        const duplicateRows = await query(
+          'SELECT "id" FROM invoices WHERE "dcNo" = $1 AND "mode" = $2 LIMIT 1',
+          [dcNo, mode]
+        );
+        if (duplicateRows.length > 0) {
           return NextResponse.json(
-            { error: `Slip Bill number ${invoiceNo} already exists. Please use a different number.` },
-            { status: 409 }
-          );
-        } else {
-          return NextResponse.json(
-            { error: `Invoice number ${invoiceNo} already exists. Please use a different number.` },
+            { error: `Delivery Challan number ${dcNo} already exists. Please use a different number.` },
             { status: 409 }
           );
         }
+      }
+    } else if (invoiceNo) {
+      // STRICT separation: Only check for duplicates within the EXACT same document type.
+      const duplicateRows = await query(
+        'SELECT "id" FROM invoices WHERE "invoiceNo" = $1 AND "mode" = $2 LIMIT 1',
+        [invoiceNo, mode]
+      );
+
+      if (duplicateRows.length > 0) {
+        const docName = mode === 'quotation' ? 'Quotation' : mode === 'slip-bill' ? 'Slip Bill' : 'Invoice';
+        return NextResponse.json(
+          { error: `${docName} number ${invoiceNo} already exists. Please use a different number.` },
+          { status: 409 }
+        );
       }
     }
 
@@ -257,129 +331,153 @@ export async function POST(request) {
     // --- Create invoice with snapshot data ---
     const invoiceId = crypto.randomUUID();
 
-    const invoiceInsert = {
-      id: invoiceId,
-      invoiceNo: data.invoiceDetails.invoiceNo || '',
-      date: data.invoiceDetails.date || new Date().toISOString().split('T')[0],
-      dueDate: data.invoiceDetails.dueDate || null,
-      poNumber: data.invoiceDetails.poNumber || null,
-      reference: data.invoiceDetails.reference || null,
-      placeOfSupply: data.invoiceDetails.placeOfSupply || null,
-      taxType: data.invoiceDetails.taxType || 'cgst_sgst',
-      reverseCharge: data.invoiceDetails.reverseCharge || false,
-      ewayBillNo: data.invoiceDetails.ewayBillNo || null,
-      vehicleNo: data.invoiceDetails.vehicleNo || null,
-      transporterName: data.invoiceDetails.transporterName || null,
-      driverName: data.invoiceDetails.driverName || null,
-      driverMobile: data.invoiceDetails.driverMobile || null,
-      transporterId: data.invoiceDetails.transporterId || null,
-      distance: data.invoiceDetails.distance || null,
-      modeOfTransport: data.invoiceDetails.modeOfTransport || null,
-      terms: data.invoiceDetails.terms || null,
-      paymentTerms: data.invoiceDetails.paymentTerms || null,
-      notes: data.invoiceDetails.notes || null,
-      taxRate: parseFloat(data.taxRate) || 0,
-      mode: mode,
-      quotationGstOption: data.quotationGstOption || null,
-      subtotal: parseFloat(data.subtotal) || 0,
-      cgstAmount: parseFloat(data.cgstAmount) || 0,
-      sgstAmount: parseFloat(data.sgstAmount) || 0,
-      igstAmount: parseFloat(data.igstAmount) || 0,
-      grandTotal: parseFloat(data.grandTotal) || 0,
-      // DC Bill specific
-      dcNo: data.dcDetails?.dcNo || null,
-      dcStatus: data.dcDetails?.dcStatus || null,
-      receiverName: data.dcDetails?.receiverName || null,
-      // Relations
-      sellerId: seller.id,
-      buyerId: buyer.id,
-      // Snapshots
-      ...snapshots,
-      // Billing Address
-      billingName: data.billing?.name || null,
-      billingAddress: data.billing?.address || null,
-      billingGstin: data.billing?.gstin || null,
-      billingState: data.billing?.state || null,
-      billingStateCode: data.billing?.stateCode || null,
-      // Shipping Address
-      shippingName: data.shipping?.name || null,
-      shippingAddress: data.shipping?.address || null,
-      shippingGstin: data.shipping?.gstin || null,
-      shippingState: data.shipping?.state || null,
-      shippingStateCode: data.shipping?.stateCode || null,
-    };
-
-    const { error: invoiceError } = await supabase
-      .from('invoices')
-      .insert([invoiceInsert]);
-
-    if (invoiceError) throw invoiceError;
+    await query(
+      `INSERT INTO invoices (
+        "id", "invoiceNo", "date", "dueDate", "poNumber", "reference", "placeOfSupply",
+        "taxType", "reverseCharge", "ewayBillNo", "vehicleNo", "transporterName",
+        "driverName", "driverMobile", "transporterId", "distance", "modeOfTransport",
+        "terms", "paymentTerms", "notes", "taxRate", "mode", "quotationGstOption",
+        "subtotal", "cgstAmount", "sgstAmount", "igstAmount", "grandTotal",
+        "dcNo", "dcStatus", "receiverName",
+        "sellerId", "buyerId",
+        "sellerName", "sellerAddress", "sellerGstin", "sellerState", "sellerStateCode",
+        "sellerContact", "sellerEmail", "sellerBankName", "sellerAccNo", "sellerBranch", "sellerIfsc", "sellerLogo",
+        "buyerName", "buyerAddress", "buyerDestination", "buyerContact", "buyerGstin",
+        "buyerState", "buyerStateCode", "buyerNumber", "buyerEmail",
+        "billingName", "billingAddress", "billingGstin", "billingState", "billingStateCode",
+        "shippingName", "shippingAddress", "shippingGstin", "shippingState", "shippingStateCode"
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7,
+        $8, $9, $10, $11, $12,
+        $13, $14, $15, $16, $17,
+        $18, $19, $20, $21, $22, $23,
+        $24, $25, $26, $27, $28,
+        $29, $30, $31,
+        $32, $33,
+        $34, $35, $36, $37, $38,
+        $39, $40, $41, $42, $43, $44, $45,
+        $46, $47, $48, $49, $50,
+        $51, $52, $53, $54,
+        $55, $56, $57, $58, $59,
+        $60, $61, $62, $63, $64
+      )`,
+      [
+        invoiceId,
+        data.invoiceDetails.invoiceNo || '',
+        data.invoiceDetails.date || new Date().toISOString().split('T')[0],
+        data.invoiceDetails.dueDate || null,
+        data.invoiceDetails.poNumber || null,
+        data.invoiceDetails.reference || null,
+        data.invoiceDetails.placeOfSupply || null,
+        data.invoiceDetails.taxType || 'cgst_sgst',
+        data.invoiceDetails.reverseCharge || false,
+        data.invoiceDetails.ewayBillNo || null,
+        data.invoiceDetails.vehicleNo || null,
+        data.invoiceDetails.transporterName || null,
+        data.invoiceDetails.driverName || null,
+        data.invoiceDetails.driverMobile || null,
+        data.invoiceDetails.transporterId || null,
+        data.invoiceDetails.distance || null,
+        data.invoiceDetails.modeOfTransport || null,
+        data.invoiceDetails.terms || null,
+        data.invoiceDetails.paymentTerms || null,
+        data.invoiceDetails.notes || null,
+        parseFloat(data.taxRate) || 0,
+        mode,
+        data.quotationGstOption || null,
+        parseFloat(data.subtotal) || 0,
+        parseFloat(data.cgstAmount) || 0,
+        parseFloat(data.sgstAmount) || 0,
+        parseFloat(data.igstAmount) || 0,
+        parseFloat(data.grandTotal) || 0,
+        data.dcDetails?.dcNo || null,
+        data.dcDetails?.dcStatus || null,
+        data.dcDetails?.receiverName || null,
+        seller.id,
+        buyer.id,
+        snapshots.sellerName,
+        snapshots.sellerAddress,
+        snapshots.sellerGstin,
+        snapshots.sellerState,
+        snapshots.sellerStateCode,
+        snapshots.sellerContact,
+        snapshots.sellerEmail,
+        snapshots.sellerBankName,
+        snapshots.sellerAccNo,
+        snapshots.sellerBranch,
+        snapshots.sellerIfsc,
+        snapshots.sellerLogo,
+        snapshots.buyerName,
+        snapshots.buyerAddress,
+        snapshots.buyerDestination,
+        snapshots.buyerContact,
+        snapshots.buyerGstin,
+        snapshots.buyerState,
+        snapshots.buyerStateCode,
+        snapshots.buyerNumber,
+        snapshots.buyerEmail,
+        data.billing?.name || null,
+        data.billing?.address || null,
+        data.billing?.gstin || null,
+        data.billing?.state || null,
+        data.billing?.stateCode || null,
+        data.shipping?.name || null,
+        data.shipping?.address || null,
+        data.shipping?.gstin || null,
+        data.shipping?.state || null,
+        data.shipping?.stateCode || null,
+      ]
+    );
 
     try {
       // --- Create Items ---
-      const itemsInsert = data.items.map((item) => ({
-        id: crypto.randomUUID(),
-        description: item.description || '',
-        hsn: item.hsn || null,
-        sac: item.sac || null,
-        quantity: parseFloat(item.quantity) || 0,
-        rate: parseFloat(item.rate) || 0,
-        discount: parseFloat(item.discount) || 0,
-        unit: item.unit || null,
-        invoiceId: invoiceId,
-      }));
-
-      const { error: itemsError } = await supabase
-        .from('items')
-        .insert(itemsInsert);
-
-      if (itemsError) throw itemsError;
+      for (const item of data.items) {
+        await query(
+          `INSERT INTO items ("id", "description", "hsn", "sac", "quantity", "rate", "discount", "unit", "invoiceId")
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            crypto.randomUUID(),
+            item.description || '',
+            item.hsn || null,
+            item.sac || null,
+            parseFloat(item.quantity) || 0,
+            parseFloat(item.rate) || 0,
+            parseFloat(item.discount) || 0,
+            item.unit || null,
+            invoiceId,
+          ]
+        );
+      }
 
       // --- Create Additional Charges ---
-      const chargesInsert = {
-        id: crypto.randomUUID(),
-        freight: parseFloat(data.additionalCharges?.freight) || 0,
-        insurance: parseFloat(data.additionalCharges?.insurance) || 0,
-        packing: parseFloat(data.additionalCharges?.packing) || 0,
-        other: parseFloat(data.additionalCharges?.other) || 0,
-        discount: parseFloat(data.additionalCharges?.discount) || 0,
-        lessAmount: parseFloat(data.additionalCharges?.lessAmount) || 0,
-        lessDescription: data.additionalCharges?.lessDescription || null,
-        invoiceId: invoiceId,
-      };
-
-      const { error: chargesError } = await supabase
-        .from('additional_charges')
-        .insert([chargesInsert]);
-
-      if (chargesError) throw chargesError;
-
+      await query(
+        `INSERT INTO additional_charges ("id", "freight", "insurance", "packing", "other", "discount", "lessAmount", "lessDescription", "invoiceId")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          crypto.randomUUID(),
+          parseFloat(data.additionalCharges?.freight) || 0,
+          parseFloat(data.additionalCharges?.insurance) || 0,
+          parseFloat(data.additionalCharges?.packing) || 0,
+          parseFloat(data.additionalCharges?.other) || 0,
+          parseFloat(data.additionalCharges?.discount) || 0,
+          parseFloat(data.additionalCharges?.lessAmount) || 0,
+          data.additionalCharges?.lessDescription || null,
+          invoiceId,
+        ]
+      );
     } catch (err) {
       // Rollback newly created invoice (cascades to items/charges if any were created)
-      await supabase.from('invoices').delete().eq('id', invoiceId);
+      await query('DELETE FROM invoices WHERE "id" = $1', [invoiceId]);
       throw err;
     }
 
-    // --- Retrieve full invoice matching Prisma return structure ---
-    const { data: fullInvoice, error: fetchError } = await supabase
-      .from('invoices')
-      .select(`
-        *,
-        seller:sellers(*),
-        buyer:buyers(*),
-        items(*),
-        additionalCharges:additional_charges(*)
-      `)
-      .eq('id', invoiceId)
-      .single();
-
-    if (fetchError) throw fetchError;
+    // --- Retrieve full invoice ---
+    const fullInvoice = await fetchFullInvoice(invoiceId);
 
     const formattedInvoice = {
       ...fullInvoice,
-      date: fullInvoice.date ? fullInvoice.date.split('T')[0] : null,
-      dueDate: fullInvoice.dueDate ? fullInvoice.dueDate.split('T')[0] : null,
-      additionalCharges: getAdditionalCharges(fullInvoice.additionalCharges)
+      date: fullInvoice.date ? String(fullInvoice.date).split('T')[0] : null,
+      dueDate: fullInvoice.dueDate ? String(fullInvoice.dueDate).split('T')[0] : null,
     };
 
     // --- Get updated next numbers ---
@@ -400,28 +498,16 @@ export async function POST(request) {
 // GET — Fetch all invoices + next numbers
 // ============================================================================
 export async function GET() {
-  const guard = guardSupabase();
+  const guard = guardDB();
   if (guard) return guard;
 
   try {
-    const { data: invoices, error } = await supabase
-      .from('invoices')
-      .select(`
-        *,
-        seller:sellers(*),
-        buyer:buyers(*),
-        items(*),
-        additionalCharges:additional_charges(*)
-      `)
-      .order('createdAt', { ascending: false });
+    const invoices = await fetchAllInvoices();
 
-    if (error) throw error;
-
-    const formattedInvoices = (invoices || []).map((inv) => ({
+    const formattedInvoices = invoices.map((inv) => ({
       ...inv,
-      date: inv.date ? inv.date.split('T')[0] : null,
-      dueDate: inv.dueDate ? inv.dueDate.split('T')[0] : null,
-      additionalCharges: getAdditionalCharges(inv.additionalCharges),
+      date: inv.date ? String(inv.date).split('T')[0] : null,
+      dueDate: inv.dueDate ? String(inv.dueDate).split('T')[0] : null,
     }));
 
     const nextNumbers = await getNextNumbers();
@@ -440,7 +526,7 @@ export async function GET() {
 // PUT — Update an existing invoice
 // ============================================================================
 export async function PUT(request) {
-  const guard = guardSupabase();
+  const guard = guardDB();
   if (guard) return guard;
 
   try {
@@ -454,22 +540,55 @@ export async function PUT(request) {
     }
 
     // --- Find existing invoice ---
-    const { data: existingInvoice, error: findError } = await supabase
-      .from('invoices')
-      .select('*, items(*), additionalCharges:additional_charges(*)')
-      .eq('id', id)
-      .maybeSingle();
+    const existingRows = await query(
+      'SELECT * FROM invoices WHERE "id" = $1',
+      [id]
+    );
 
-    if (findError) throw findError;
-
-    if (!existingInvoice) {
+    if (existingRows.length === 0) {
       return NextResponse.json(
         { error: 'Invoice not found' },
         { status: 404 }
       );
     }
 
-    const existingCharges = getAdditionalCharges(existingInvoice.additionalCharges);
+    const existingInvoice = existingRows[0];
+    const mode = data.mode || existingInvoice.mode;
+    const newInvoiceNo = data.invoiceDetails?.invoiceNo || existingInvoice.invoiceNo;
+    const newDcNo = data.dcDetails?.dcNo || existingInvoice.dcNo;
+
+    // --- Duplicate Number Check ---
+    if (mode === 'dc-bill' && newDcNo && newDcNo !== existingInvoice.dcNo) {
+      const duplicateRows = await query(
+        'SELECT "id" FROM invoices WHERE "dcNo" = $1 AND "mode" = $2 AND "id" != $3 LIMIT 1',
+        [newDcNo, mode, id]
+      );
+      if (duplicateRows.length > 0) {
+        return NextResponse.json(
+          { error: `Delivery Challan number ${newDcNo} already exists. Please use a different number.` },
+          { status: 409 }
+        );
+      }
+    } else if (mode !== 'dc-bill' && newInvoiceNo && newInvoiceNo !== existingInvoice.invoiceNo) {
+      const duplicateRows = await query(
+        'SELECT "id" FROM invoices WHERE "invoiceNo" = $1 AND "mode" = $2 AND "id" != $3 LIMIT 1',
+        [newInvoiceNo, mode, id]
+      );
+      if (duplicateRows.length > 0) {
+        const docName = mode === 'quotation' ? 'Quotation' : mode === 'slip-bill' ? 'Slip Bill' : 'Invoice';
+        return NextResponse.json(
+          { error: `${docName} number ${newInvoiceNo} already exists. Please use a different number.` },
+          { status: 409 }
+        );
+      }
+    }
+
+    // Check for existing additional charges
+    const existingChargeRows = await query(
+      'SELECT * FROM additional_charges WHERE "invoiceId" = $1',
+      [id]
+    );
+    const existingCharges = existingChargeRows.length > 0 ? existingChargeRows[0] : null;
 
     // --- Find or create seller/buyer ---
     const seller = await findOrCreateSeller(data.seller || {});
@@ -479,93 +598,117 @@ export async function PUT(request) {
     const snapshots = buildSnapshotFields(data);
 
     // --- Update invoice ---
-    const invoiceUpdate = {
-      invoiceNo: data.invoiceDetails?.invoiceNo || existingInvoice.invoiceNo,
-      date: data.invoiceDetails?.date || existingInvoice.date,
-      dueDate: data.invoiceDetails?.dueDate || null,
-      poNumber: data.invoiceDetails?.poNumber || null,
-      reference: data.invoiceDetails?.reference || null,
-      placeOfSupply: data.invoiceDetails?.placeOfSupply || null,
-      taxType: data.invoiceDetails?.taxType || 'cgst_sgst',
-      reverseCharge: data.invoiceDetails?.reverseCharge || false,
-      ewayBillNo: data.invoiceDetails?.ewayBillNo || null,
-      vehicleNo: data.invoiceDetails?.vehicleNo || null,
-      transporterName: data.invoiceDetails?.transporterName || null,
-      driverName: data.invoiceDetails?.driverName || null,
-      driverMobile: data.invoiceDetails?.driverMobile || null,
-      transporterId: data.invoiceDetails?.transporterId || null,
-      distance: data.invoiceDetails?.distance || null,
-      modeOfTransport: data.invoiceDetails?.modeOfTransport || null,
-      terms: data.invoiceDetails?.terms || null,
-      paymentTerms: data.invoiceDetails?.paymentTerms || null,
-      notes: data.invoiceDetails?.notes || null,
-      taxRate: parseFloat(data.taxRate) || 0,
-      mode: data.mode || existingInvoice.mode,
-      quotationGstOption: data.quotationGstOption || null,
-      subtotal: parseFloat(data.subtotal) || 0,
-      cgstAmount: parseFloat(data.cgstAmount) || 0,
-      sgstAmount: parseFloat(data.sgstAmount) || 0,
-      igstAmount: parseFloat(data.igstAmount) || 0,
-      grandTotal: parseFloat(data.grandTotal) || 0,
-      // DC Bill specific
-      dcNo: data.dcDetails?.dcNo || null,
-      dcStatus: data.dcDetails?.dcStatus || null,
-      receiverName: data.dcDetails?.receiverName || null,
-      // Relations
-      sellerId: seller.id,
-      buyerId: buyer.id,
-      // Snapshots
-      ...snapshots,
-      // Billing Address
-      billingName: data.billing?.name || null,
-      billingAddress: data.billing?.address || null,
-      billingGstin: data.billing?.gstin || null,
-      billingState: data.billing?.state || null,
-      billingStateCode: data.billing?.stateCode || null,
-      // Shipping Address
-      shippingName: data.shipping?.name || null,
-      shippingAddress: data.shipping?.address || null,
-      shippingGstin: data.shipping?.gstin || null,
-      shippingState: data.shipping?.state || null,
-      shippingStateCode: data.shipping?.stateCode || null,
-      updatedAt: new Date().toISOString(),
-    };
-
-    const { error: invoiceError } = await supabase
-      .from('invoices')
-      .update(invoiceUpdate)
-      .eq('id', id);
-
-    if (invoiceError) throw invoiceError;
+    await query(
+      `UPDATE invoices SET
+        "invoiceNo" = $1, "date" = $2, "dueDate" = $3, "poNumber" = $4, "reference" = $5,
+        "placeOfSupply" = $6, "taxType" = $7, "reverseCharge" = $8, "ewayBillNo" = $9,
+        "vehicleNo" = $10, "transporterName" = $11, "driverName" = $12, "driverMobile" = $13,
+        "transporterId" = $14, "distance" = $15, "modeOfTransport" = $16, "terms" = $17,
+        "paymentTerms" = $18, "notes" = $19, "taxRate" = $20, "mode" = $21, "quotationGstOption" = $22,
+        "subtotal" = $23, "cgstAmount" = $24, "sgstAmount" = $25, "igstAmount" = $26, "grandTotal" = $27,
+        "dcNo" = $28, "dcStatus" = $29, "receiverName" = $30,
+        "sellerId" = $31, "buyerId" = $32,
+        "sellerName" = $33, "sellerAddress" = $34, "sellerGstin" = $35, "sellerState" = $36, "sellerStateCode" = $37,
+        "sellerContact" = $38, "sellerEmail" = $39, "sellerBankName" = $40, "sellerAccNo" = $41,
+        "sellerBranch" = $42, "sellerIfsc" = $43, "sellerLogo" = $44,
+        "buyerName" = $45, "buyerAddress" = $46, "buyerDestination" = $47, "buyerContact" = $48,
+        "buyerGstin" = $49, "buyerState" = $50, "buyerStateCode" = $51, "buyerNumber" = $52, "buyerEmail" = $53,
+        "billingName" = $54, "billingAddress" = $55, "billingGstin" = $56, "billingState" = $57, "billingStateCode" = $58,
+        "shippingName" = $59, "shippingAddress" = $60, "shippingGstin" = $61, "shippingState" = $62, "shippingStateCode" = $63,
+        "updatedAt" = $64
+      WHERE "id" = $65`,
+      [
+        data.invoiceDetails?.invoiceNo || existingInvoice.invoiceNo,
+        data.invoiceDetails?.date || existingInvoice.date,
+        data.invoiceDetails?.dueDate || null,
+        data.invoiceDetails?.poNumber || null,
+        data.invoiceDetails?.reference || null,
+        data.invoiceDetails?.placeOfSupply || null,
+        data.invoiceDetails?.taxType || 'cgst_sgst',
+        data.invoiceDetails?.reverseCharge || false,
+        data.invoiceDetails?.ewayBillNo || null,
+        data.invoiceDetails?.vehicleNo || null,
+        data.invoiceDetails?.transporterName || null,
+        data.invoiceDetails?.driverName || null,
+        data.invoiceDetails?.driverMobile || null,
+        data.invoiceDetails?.transporterId || null,
+        data.invoiceDetails?.distance || null,
+        data.invoiceDetails?.modeOfTransport || null,
+        data.invoiceDetails?.terms || null,
+        data.invoiceDetails?.paymentTerms || null,
+        data.invoiceDetails?.notes || null,
+        parseFloat(data.taxRate) || 0,
+        data.mode || existingInvoice.mode,
+        data.quotationGstOption || null,
+        parseFloat(data.subtotal) || 0,
+        parseFloat(data.cgstAmount) || 0,
+        parseFloat(data.sgstAmount) || 0,
+        parseFloat(data.igstAmount) || 0,
+        parseFloat(data.grandTotal) || 0,
+        data.dcDetails?.dcNo || null,
+        data.dcDetails?.dcStatus || null,
+        data.dcDetails?.receiverName || null,
+        seller.id,
+        buyer.id,
+        snapshots.sellerName,
+        snapshots.sellerAddress,
+        snapshots.sellerGstin,
+        snapshots.sellerState,
+        snapshots.sellerStateCode,
+        snapshots.sellerContact,
+        snapshots.sellerEmail,
+        snapshots.sellerBankName,
+        snapshots.sellerAccNo,
+        snapshots.sellerBranch,
+        snapshots.sellerIfsc,
+        snapshots.sellerLogo,
+        snapshots.buyerName,
+        snapshots.buyerAddress,
+        snapshots.buyerDestination,
+        snapshots.buyerContact,
+        snapshots.buyerGstin,
+        snapshots.buyerState,
+        snapshots.buyerStateCode,
+        snapshots.buyerNumber,
+        snapshots.buyerEmail,
+        data.billing?.name || null,
+        data.billing?.address || null,
+        data.billing?.gstin || null,
+        data.billing?.state || null,
+        data.billing?.stateCode || null,
+        data.shipping?.name || null,
+        data.shipping?.address || null,
+        data.shipping?.gstin || null,
+        data.shipping?.state || null,
+        data.shipping?.stateCode || null,
+        new Date().toISOString(),
+        id,
+      ]
+    );
 
     // --- Re-create Items: Delete old ones and insert new ones ---
-    const { error: deleteItemsError } = await supabase
-      .from('items')
-      .delete()
-      .eq('invoiceId', id);
+    await query('DELETE FROM items WHERE "invoiceId" = $1', [id]);
 
-    if (deleteItemsError) throw deleteItemsError;
-
-    const itemsInsert = (data.items || []).map((item) => ({
-      id: crypto.randomUUID(),
-      description: item.description || '',
-      hsn: item.hsn || null,
-      sac: item.sac || null,
-      quantity: parseFloat(item.quantity) || 0,
-      rate: parseFloat(item.rate) || 0,
-      discount: parseFloat(item.discount) || 0,
-      unit: item.unit || null,
-      invoiceId: id,
-    }));
-
-    const { error: insertItemsError } = await supabase
-      .from('items')
-      .insert(itemsInsert);
-
-    if (insertItemsError) throw insertItemsError;
+    for (const item of (data.items || [])) {
+      await query(
+        `INSERT INTO items ("id", "description", "hsn", "sac", "quantity", "rate", "discount", "unit", "invoiceId")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [
+          crypto.randomUUID(),
+          item.description || '',
+          item.hsn || null,
+          item.sac || null,
+          parseFloat(item.quantity) || 0,
+          parseFloat(item.rate) || 0,
+          parseFloat(item.discount) || 0,
+          item.unit || null,
+          id,
+        ]
+      );
+    }
 
     // --- Update/Upsert Additional Charges ---
-    const chargesUpdate = {
+    const chargesData = {
       freight: parseFloat(data.additionalCharges?.freight) || 0,
       insurance: parseFloat(data.additionalCharges?.insurance) || 0,
       packing: parseFloat(data.additionalCharges?.packing) || 0,
@@ -576,44 +719,30 @@ export async function PUT(request) {
     };
 
     if (existingCharges) {
-      const { error: chargesError } = await supabase
-        .from('additional_charges')
-        .update(chargesUpdate)
-        .eq('invoiceId', id);
-
-      if (chargesError) throw chargesError;
+      await query(
+        `UPDATE additional_charges SET
+          "freight" = $1, "insurance" = $2, "packing" = $3, "other" = $4,
+          "discount" = $5, "lessAmount" = $6, "lessDescription" = $7
+        WHERE "invoiceId" = $8`,
+        [chargesData.freight, chargesData.insurance, chargesData.packing, chargesData.other,
+         chargesData.discount, chargesData.lessAmount, chargesData.lessDescription, id]
+      );
     } else {
-      const { error: chargesError } = await supabase
-        .from('additional_charges')
-        .insert([{
-          id: crypto.randomUUID(),
-          ...chargesUpdate,
-          invoiceId: id,
-        }]);
-
-      if (chargesError) throw chargesError;
+      await query(
+        `INSERT INTO additional_charges ("id", "freight", "insurance", "packing", "other", "discount", "lessAmount", "lessDescription", "invoiceId")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+        [crypto.randomUUID(), chargesData.freight, chargesData.insurance, chargesData.packing,
+         chargesData.other, chargesData.discount, chargesData.lessAmount, chargesData.lessDescription, id]
+      );
     }
 
     // --- Retrieve updated full invoice ---
-    const { data: updatedInvoice, error: fetchError } = await supabase
-      .from('invoices')
-      .select(`
-        *,
-        seller:sellers(*),
-        buyer:buyers(*),
-        items(*),
-        additionalCharges:additional_charges(*)
-      `)
-      .eq('id', id)
-      .single();
-
-    if (fetchError) throw fetchError;
+    const updatedInvoice = await fetchFullInvoice(id);
 
     const formattedInvoice = {
       ...updatedInvoice,
-      date: updatedInvoice.date ? updatedInvoice.date.split('T')[0] : null,
-      dueDate: updatedInvoice.dueDate ? updatedInvoice.dueDate.split('T')[0] : null,
-      additionalCharges: getAdditionalCharges(updatedInvoice.additionalCharges)
+      date: updatedInvoice.date ? String(updatedInvoice.date).split('T')[0] : null,
+      dueDate: updatedInvoice.dueDate ? String(updatedInvoice.dueDate).split('T')[0] : null,
     };
 
     return NextResponse.json({ invoice: formattedInvoice });
@@ -630,7 +759,7 @@ export async function PUT(request) {
 // DELETE — Delete an invoice
 // ============================================================================
 export async function DELETE(request) {
-  const guard = guardSupabase();
+  const guard = guardDB();
   if (guard) return guard;
 
   try {
@@ -644,16 +773,13 @@ export async function DELETE(request) {
       );
     }
 
-    // --- Find invoice before deleting to get its items for stock restoration ---
-    const { data: invoiceToDelete, error: findError } = await supabase
-      .from('invoices')
-      .select('id, mode, items(*)')
-      .eq('id', id)
-      .maybeSingle();
+    // --- Find invoice before deleting ---
+    const invoiceRows = await query(
+      'SELECT "id", "mode" FROM invoices WHERE "id" = $1',
+      [id]
+    );
 
-    if (findError) throw findError;
-
-    if (!invoiceToDelete) {
+    if (invoiceRows.length === 0) {
       return NextResponse.json(
         { error: 'Invoice not found' },
         { status: 404 }
@@ -661,12 +787,7 @@ export async function DELETE(request) {
     }
 
     // --- Delete invoice (cascades to items and additionalCharges via foreign keys) ---
-    const { error: deleteError } = await supabase
-      .from('invoices')
-      .delete()
-      .eq('id', id);
-
-    if (deleteError) throw deleteError;
+    await query('DELETE FROM invoices WHERE "id" = $1', [id]);
 
     // --- Return updated next numbers ---
     const nextNumbers = await getNextNumbers();
@@ -688,7 +809,7 @@ export async function DELETE(request) {
 // PATCH — Partial update for payment status
 // ============================================================================
 export async function PATCH(request) {
-  const guard = guardSupabase();
+  const guard = guardDB();
   if (guard) return guard;
 
   try {
@@ -702,40 +823,44 @@ export async function PATCH(request) {
       );
     }
 
-    const updateData = {};
-    if (paymentStatus !== undefined) updateData.paymentStatus = paymentStatus;
-    if (paymentDate !== undefined)
-      updateData.paymentDate = paymentDate ? new Date(paymentDate).toISOString() : null;
-    if (paymentAmount !== undefined)
-      updateData.paymentAmount = parseFloat(paymentAmount) || 0;
-    if (paymentNotes !== undefined) updateData.paymentNotes = paymentNotes;
-    updateData.updatedAt = new Date().toISOString();
+    // Build dynamic update fields
+    const setClauses = [];
+    const values = [];
+    let paramIdx = 1;
 
-    const { error: updateError } = await supabase
-      .from('invoices')
-      .update(updateData)
-      .eq('id', id);
+    if (paymentStatus !== undefined) {
+      setClauses.push(`"paymentStatus" = $${paramIdx++}`);
+      values.push(paymentStatus);
+    }
+    if (paymentDate !== undefined) {
+      setClauses.push(`"paymentDate" = $${paramIdx++}`);
+      values.push(paymentDate ? new Date(paymentDate).toISOString() : null);
+    }
+    if (paymentAmount !== undefined) {
+      setClauses.push(`"paymentAmount" = $${paramIdx++}`);
+      values.push(parseFloat(paymentAmount) || 0);
+    }
+    if (paymentNotes !== undefined) {
+      setClauses.push(`"paymentNotes" = $${paramIdx++}`);
+      values.push(paymentNotes);
+    }
+    setClauses.push(`"updatedAt" = $${paramIdx++}`);
+    values.push(new Date().toISOString());
 
-    if (updateError) throw updateError;
+    // Add the WHERE clause parameter
+    values.push(id);
+
+    await query(
+      `UPDATE invoices SET ${setClauses.join(', ')} WHERE "id" = $${paramIdx}`,
+      values
+    );
 
     // Retrieve updated invoice
-    const { data: invoice, error: fetchError } = await supabase
-      .from('invoices')
-      .select(`
-        *,
-        seller:sellers(*),
-        buyer:buyers(*),
-        items(*),
-        additionalCharges:additional_charges(*)
-      `)
-      .eq('id', id)
-      .single();
-
-    if (fetchError) throw fetchError;
+    const invoice = await fetchFullInvoice(id);
 
     const formattedInvoice = {
       ...invoice,
-      additionalCharges: getAdditionalCharges(invoice.additionalCharges)
+      additionalCharges: invoice.additionalCharges || null,
     };
 
     return NextResponse.json({ invoice: formattedInvoice });

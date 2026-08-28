@@ -1,13 +1,4 @@
 import React from "react";
-import { ToWords } from "to-words";
-
-const toWords = new ToWords({
-  localeCode: "en-IN",
-  converterOptions: {
-    currency: true,
-    ignoreDecimal: true,
-  },
-});
 
 const InvoiceMain = ({
   copyType,
@@ -17,6 +8,7 @@ const InvoiceMain = ({
   sgstAmount,
   igstAmount,
   grandTotal,
+  amountInWords,
   lessAmount,
   discountAmount,
   mode,
@@ -26,9 +18,6 @@ const InvoiceMain = ({
     (acc, item) => acc + (parseFloat(item.quantity) || 0),
     0
   );
-  // Safety: ensure grandTotal is a valid positive number for toWords
-  const safeGrandTotal = Math.max(0, Math.round(parseFloat(grandTotal) || 0));
-  const amountInWords = safeGrandTotal > 0 ? toWords.convert(safeGrandTotal) : 'Zero';
   const isCGST_SGST = invoiceData.invoiceDetails.taxType === "cgst_sgst";
   const shouldShowGST =
     (mode === "gst-bill" || (mode === "quotation" && gstOption === "with-gst")) && mode !== 'slip-bill';
@@ -202,10 +191,20 @@ const InvoiceMain = ({
       ) : (
         <div className=" p-2  bg-white border border-t-0">
           <h3 className="text-[10px] font-bold uppercase text-gray-500 mb-2">
-            Party Details
+            {mode === 'dc-bill' ? 'Delivery / Party Details' : 'Party Details'}
           </h3>
           <p className="font-bold  text-[13px]">{invoiceData.buyer.name}</p>
           <p className="text-[13px] ">{invoiceData.buyer.address}</p>
+          {invoiceData.buyer.destination && (
+            <p className="text-[13px] mt-1">
+              <strong>Destination:</strong> {invoiceData.buyer.destination}
+            </p>
+          )}
+          {invoiceData.buyer.gstin && (
+            <p className="text-[13px] mt-1">
+              <strong>GSTIN:</strong> {invoiceData.buyer.gstin}
+            </p>
+          )}
           {invoiceData.buyer.buyerNumber && (
             <p className="text-[13px]  mt-1">
               <strong>Buyer No:</strong> {invoiceData.buyer.buyerNumber}
@@ -214,7 +213,7 @@ const InvoiceMain = ({
           <p className="text-[13px]  mt-1">
             <strong>Contact:</strong> {invoiceData.buyer.contact || "N/A"}
           </p>
-          <p className="text-[13px] ">
+          <p className="text-[13px] mt-1">
             <strong>State:</strong> {invoiceData.buyer.state} (Code:{" "}
             {invoiceData.buyer.stateCode})
           </p>
