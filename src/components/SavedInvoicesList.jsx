@@ -101,6 +101,17 @@ export default function SavedInvoicesList({
       });
     }
 
+    // Sort by invoice/DC number descending (latest first)
+    result.sort((a, b) => {
+      const numA = currentMode === 'dc-bill'
+        ? parseInt(String(a.dcNo).replace(/\D/g, ''), 10) || 0
+        : parseInt(a.invoiceNo, 10) || 0;
+      const numB = currentMode === 'dc-bill'
+        ? parseInt(String(b.dcNo).replace(/\D/g, ''), 10) || 0
+        : parseInt(b.invoiceNo, 10) || 0;
+      return numB - numA;
+    });
+
     return result;
   }, [filteredByMode, searchQuery, filterMonth, filterYear, filterStatus, currentMode]);
 
