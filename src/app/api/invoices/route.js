@@ -25,6 +25,60 @@ function safeParseInt(val) {
 }
 
 /**
+ * Safely format a date value to 'YYYY-MM-DD' for PostgreSQL.
+ * Handles Date objects, JS date strings (e.g. "Sun Aug 02 2026 00:00:00 GMT..."),
+ * truncated JS date strings (e.g. "Sun Aug 02 2026 00:00:00 GM"),
+ * ISO strings, and YYYY-MM-DD strings.
+ * Returns null if the value is falsy or unparseable.
+ */
+function safeDateFormat(val) {
+  if (!val) return null;
+  const str = typeof val === 'string' ? val.trim() : String(val).trim();
+  if (!str) return null;
+
+  // If already in YYYY-MM-DD format, return as-is
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return str;
+  }
+
+  // Handle ISO strings like "2026-08-02T00:00:00.000Z"
+  const isoMatch = str.match(/^(\d{4}-\d{2}-\d{2})T/);
+  if (isoMatch) {
+    return isoMatch[1];
+  }
+
+  // Handle JS Date.toString() format: "Sun Aug 02 2026 00:00:00 GMT+0530..."
+  // Also handles truncated versions like "Sun Aug 02 2026 00:00:00 GM"
+  const jsDateMatch = str.match(/^\w{3}\s+(\w{3})\s+(\d{1,2})\s+(\d{4})/);
+  if (jsDateMatch) {
+    const months = { Jan:'01', Feb:'02', Mar:'03', Apr:'04', May:'05', Jun:'06',
+                     Jul:'07', Aug:'08', Sep:'09', Oct:'10', Nov:'11', Dec:'12' };
+    const month = months[jsDateMatch[1]];
+    if (month) {
+      const day = jsDateMatch[2].padStart(2, '0');
+      return `${jsDateMatch[3]}-${month}-${day}`;
+    }
+  }
+
+  // Fallback: try standard Date parsing
+  try {
+    // Strip trailing partial timezone text that may cause parse failures
+    const cleaned = str.replace(/\s+[A-Z]{1,2}$/, '');
+    const d = new Date(cleaned);
+    if (!isNaN(d.getTime())) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+/**
  * Calculate the next invoice/DC/quotation/slip numbers from the database.
  * Completely independent numbering for each document type.
  */
@@ -364,8 +418,8 @@ export async function POST(request) {
       [
         invoiceId,
         data.invoiceDetails.invoiceNo || '',
-        data.invoiceDetails.date || new Date().toISOString().split('T')[0],
-        data.invoiceDetails.dueDate || null,
+        safeDateFormat(data.invoiceDetails.date) || new Date().toISOString().split('T')[0],
+        safeDateFormat(data.invoiceDetails.dueDate),
         data.invoiceDetails.poNumber || null,
         data.invoiceDetails.reference || null,
         data.invoiceDetails.placeOfSupply || null,
@@ -476,8 +530,8 @@ export async function POST(request) {
 
     const formattedInvoice = {
       ...fullInvoice,
-      date: fullInvoice.date ? String(fullInvoice.date).split('T')[0] : null,
-      dueDate: fullInvoice.dueDate ? String(fullInvoice.dueDate).split('T')[0] : null,
+      date: safeDateFormat(fullInvoice.date),
+      dueDate: safeDateFormat(fullInvoice.dueDate),
     };
 
     // --- Get updated next numbers ---
@@ -506,8 +560,8 @@ export async function GET() {
 
     const formattedInvoices = invoices.map((inv) => ({
       ...inv,
-      date: inv.date ? String(inv.date).split('T')[0] : null,
-      dueDate: inv.dueDate ? String(inv.dueDate).split('T')[0] : null,
+      date: safeDateFormat(inv.date),
+      dueDate: safeDateFormat(inv.dueDate),
     }));
 
     const nextNumbers = await getNextNumbers();
@@ -619,8 +673,8 @@ export async function PUT(request) {
       WHERE "id" = $65`,
       [
         data.invoiceDetails?.invoiceNo || existingInvoice.invoiceNo,
-        data.invoiceDetails?.date || existingInvoice.date,
-        data.invoiceDetails?.dueDate || null,
+        safeDateFormat(data.invoiceDetails?.date) || safeDateFormat(existingInvoice.date) || new Date().toISOString().split('T')[0],
+        safeDateFormat(data.invoiceDetails?.dueDate),
         data.invoiceDetails?.poNumber || null,
         data.invoiceDetails?.reference || null,
         data.invoiceDetails?.placeOfSupply || null,
@@ -741,8 +795,8 @@ export async function PUT(request) {
 
     const formattedInvoice = {
       ...updatedInvoice,
-      date: updatedInvoice.date ? String(updatedInvoice.date).split('T')[0] : null,
-      dueDate: updatedInvoice.dueDate ? String(updatedInvoice.dueDate).split('T')[0] : null,
+      date: safeDateFormat(updatedInvoice.date),
+      dueDate: safeDateFormat(updatedInvoice.dueDate),
     };
 
     return NextResponse.json({ invoice: formattedInvoice });

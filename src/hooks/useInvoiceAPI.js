@@ -7,6 +7,57 @@ function deepClone(obj) {
   return JSON.parse(JSON.stringify(obj));
 }
 
+/**
+ * Safely format a date value to 'YYYY-MM-DD' for the API.
+ * Handles Date objects, JS toString() format (including truncated like "Sun Aug 02 2026 00:00:00 GM"),
+ * ISO strings, and YYYY-MM-DD strings.
+ */
+function safeDateFormat(val) {
+  if (!val) return '';
+  const str = typeof val === 'string' ? val.trim() : String(val).trim();
+  if (!str) return '';
+
+  // If already in YYYY-MM-DD format, return as-is
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) {
+    return str;
+  }
+
+  // Handle ISO strings like "2026-08-02T00:00:00.000Z"
+  const isoMatch = str.match(/^(\d{4}-\d{2}-\d{2})T/);
+  if (isoMatch) {
+    return isoMatch[1];
+  }
+
+  // Handle JS Date.toString() format: "Sun Aug 02 2026 00:00:00 GMT+0530..."
+  // Also handles truncated versions like "Sun Aug 02 2026 00:00:00 GM"
+  const jsDateMatch = str.match(/^\w{3}\s+(\w{3})\s+(\d{1,2})\s+(\d{4})/);
+  if (jsDateMatch) {
+    const months = { Jan:'01', Feb:'02', Mar:'03', Apr:'04', May:'05', Jun:'06',
+                     Jul:'07', Aug:'08', Sep:'09', Oct:'10', Nov:'11', Dec:'12' };
+    const month = months[jsDateMatch[1]];
+    if (month) {
+      const day = jsDateMatch[2].padStart(2, '0');
+      return `${jsDateMatch[3]}-${month}-${day}`;
+    }
+  }
+
+  // Fallback: try standard Date parsing
+  try {
+    const cleaned = str.replace(/\s+[A-Z]{1,2}$/, '');
+    const d = new Date(cleaned);
+    if (!isNaN(d.getTime())) {
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+  } catch {
+    // ignore
+  }
+
+  return '';
+}
+
 export function useInvoiceAPI(
   invoiceData,
   currentMode,
@@ -84,6 +135,12 @@ export function useInvoiceAPI(
         igstAmount,
         grandTotal,
       });
+
+      // Normalize date fields to YYYY-MM-DD before sending to API
+      if (invoiceToSave.invoiceDetails) {
+        invoiceToSave.invoiceDetails.date = safeDateFormat(invoiceToSave.invoiceDetails.date) || new Date().toISOString().split('T')[0];
+        invoiceToSave.invoiceDetails.dueDate = safeDateFormat(invoiceToSave.invoiceDetails.dueDate);
+      }
 
       const response = await fetch('/api/invoices', {
         method: 'POST',
@@ -379,6 +436,12 @@ export function useInvoiceAPI(
         igstAmount,
         grandTotal,
       });
+
+      // Normalize date fields to YYYY-MM-DD before sending to API
+      if (invoiceToUpdate.invoiceDetails) {
+        invoiceToUpdate.invoiceDetails.date = safeDateFormat(invoiceToUpdate.invoiceDetails.date) || new Date().toISOString().split('T')[0];
+        invoiceToUpdate.invoiceDetails.dueDate = safeDateFormat(invoiceToUpdate.invoiceDetails.dueDate);
+      }
 
       const response = await fetch('/api/invoices', {
         method: 'PUT',

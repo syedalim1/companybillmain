@@ -116,6 +116,60 @@ export default function SavedInvoicesList({
     return invoice.buyerName || invoice.buyer?.name || 'No Buyer';
   };
 
+  /**
+   * Safely format a date string for display (DD/MM/YYYY).
+   * Handles YYYY-MM-DD, ISO strings, and JS Date.toString() format
+   * (including truncated versions like "Sun Aug 02 2026 00:00:00 GM").
+   */
+  const formatDate = (dateVal) => {
+    if (!dateVal) return '—';
+    const str = String(dateVal).trim();
+    if (!str) return '—';
+
+    try {
+      // Handle YYYY-MM-DD directly
+      const ymdMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (ymdMatch) {
+        const [, y, m, d] = ymdMatch;
+        return `${d}/${m}/${y}`;
+      }
+
+      // Handle JS Date.toString() format: "Sun Aug 02 2026 00:00:00 GMT..."
+      // Also handles truncated: "Sun Aug 02 2026 00:00:00 GM"
+      const jsDateMatch = str.match(/^\w{3}\s+(\w{3})\s+(\d{1,2})\s+(\d{4})/);
+      if (jsDateMatch) {
+        const months = { Jan:'01', Feb:'02', Mar:'03', Apr:'04', May:'05', Jun:'06',
+                         Jul:'07', Aug:'08', Sep:'09', Oct:'10', Nov:'11', Dec:'12' };
+        const month = months[jsDateMatch[1]];
+        if (month) {
+          const day = jsDateMatch[2].padStart(2, '0');
+          return `${day}/${month}/${jsDateMatch[3]}`;
+        }
+      }
+
+      // Fallback: try standard parsing with cleaned string
+      const cleaned = str.replace(/\s+[A-Z]{1,2}$/, '');
+      const parsed = new Date(cleaned);
+      if (!isNaN(parsed.getTime())) {
+        return parsed.toLocaleDateString('en-GB');
+      }
+    } catch {
+      // ignore
+    }
+    return '—';
+  };
+
+  /**
+   * Format currency in Indian style (₹1,23,456)
+   */
+  const formatCurrency = (amount) => {
+    const num = Number(amount) || 0;
+    return '₹' + num.toLocaleString('en-IN', {
+      maximumFractionDigits: 0,
+      minimumFractionDigits: 0,
+    });
+  };
+
   const handleExportList = () => {
     if (filteredByMode.length === 0) {
       alert("No data to export");
@@ -124,7 +178,7 @@ export default function SavedInvoicesList({
     
     const dataToExport = filteredInvoices;
     const exportData = dataToExport.map(inv => ({
-      'Date': inv.date ? new Date(inv.date).toLocaleDateString('en-GB') : '',
+      'Date': inv.date ? formatDate(inv.date) : '',
       'Document No': currentMode === 'dc-bill' ? inv.dcNo : inv.invoiceNo,
       'Customer Name': getBuyerName(inv),
       'Customer GSTIN': inv.buyerGstin || inv.buyer?.gstin || '',
@@ -354,9 +408,9 @@ export default function SavedInvoicesList({
                         {getBuyerName(invoice)}
                       </div>
                       <div className="text-xs text-slate-500 flex items-center gap-2 mt-0.5">
-                        <span>{new Date(invoice.date).toLocaleDateString('en-GB')}</span>
+                        <span>{formatDate(invoice.date)}</span>
                         <span>•</span>
-                        <span className="font-medium text-slate-900 dark:text-white">₹{(invoice.grandTotal || 0).toLocaleString()}</span>
+                        <span className="font-medium text-slate-900 dark:text-white">{formatCurrency(invoice.grandTotal)}</span>
                       </div>
                     </div>
                   </div>
@@ -402,7 +456,7 @@ export default function SavedInvoicesList({
                   </button>
                 )}
                 <button
-                  onClick={() => handleDeleteInvoice(invoice)}
+                  onClick={() => handleDeleteInvoice(invoice.id)}
                   className="p-1.5 text-red-600 hover:bg-red-50 rounded-lg text-sm font-medium transition-colors cursor-pointer"
                 >
                   Delete
