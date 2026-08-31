@@ -104,22 +104,38 @@ const PaymentStatusModal = ({ isOpen, onClose, invoice, onUpdate }) => {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Payment Status */}
+            {/* Payment Status Buttons */}
             <div>
               <label className="block text-sm font-medium text-text-body mb-2">
                 Payment Status *
               </label>
-              <select
-                value={formData.paymentStatus}
-                onChange={(e) => handleInputChange('paymentStatus', e.target.value)}
-                className="w-full p-3   border border-slate-200     rounded-xl focus:bg-white  focus:outline-none focus:ring-2 focus:ring-brand-primary/50 transition-all text-text-title"
-                required
-              >
-                <option value="unpaid">Unpaid</option>
-                <option value="partial">Partial Payment</option>
-                <option value="paid">Fully Paid</option>
-                <option value="overdue">Overdue</option>
-              </select>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {[
+                  { id: 'unpaid', label: 'Unpaid', active: 'bg-slate-100 text-slate-800 border-slate-400 ring-2 ring-slate-400/20 font-bold' },
+                  { id: 'partial', label: 'Partial', active: 'bg-amber-50 text-amber-700 border-amber-400 ring-2 ring-amber-400/20 font-bold' },
+                  { id: 'paid', label: 'Paid', active: 'bg-emerald-50 text-emerald-700 border-emerald-500 ring-2 ring-emerald-500/20 font-bold' },
+                  { id: 'overdue', label: 'Overdue', active: 'bg-rose-50 text-rose-700 border-rose-400 ring-2 ring-rose-400/20 font-bold' },
+                ].map((status) => {
+                  const isSelected = formData.paymentStatus === status.id;
+                  return (
+                    <button
+                      key={status.id}
+                      type="button"
+                      onClick={() => handleInputChange('paymentStatus', status.id)}
+                      className={`py-2.5 px-3 rounded-xl border text-xs font-medium transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                        isSelected
+                          ? status.active
+                          : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50 hover:border-slate-300'
+                      }`}
+                    >
+                      {isSelected && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                      )}
+                      {status.label}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
 
             {/* Payment Date */}

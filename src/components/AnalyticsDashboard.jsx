@@ -6,7 +6,7 @@ const RevenueTooltip = ({ value, count, growth, label }) => (
   <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-3 opacity-0 group-hover:opacity-100 transition-all duration-300 z-20 pointer-events-none">
     <div className="bg-gray-900 text-white text-xs rounded-lg py-2 px-3 shadow-xl flex flex-col items-center gap-1 min-w-[100px]">
       <span className="text-gray-400 font-medium text-[10px] uppercase tracking-wider">{label}</span>
-      <span className="text-lg font-bold">₹{value.toLocaleString()}</span>
+      <span className="text-lg font-bold">₹{Math.round(value || 0).toLocaleString('en-IN')}</span>
       <div className="flex items-center gap-2 text-[10px] text-gray-300 w-full justify-between pt-1 border-t border-gray-700 mt-1">
         <span>{count} inv.</span>
         {growth !== 0 && (
@@ -128,14 +128,12 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
     const dcBillsCount = filteredInvoices.filter(inv => inv.mode === 'dc-bill').length;
     const slipBillsCount = filteredInvoices.filter(inv => inv.mode === 'slip-bill').length;
 
-    // DOCUMENT COUNTS (Include Unpaid Quotes as they are documents)
-    const paymentStats = {
-      paid: validRevenueInvoices.filter(inv => inv.paymentStatus === 'paid').length,
-      partial: validRevenueInvoices.filter(inv => inv.paymentStatus === 'partial').length,
-      unpaid: validRevenueInvoices.filter(inv => inv.paymentStatus === 'unpaid' || !inv.paymentStatus).length,
-      overdue: validRevenueInvoices.filter(inv => inv.paymentStatus === 'overdue').length,
+    // Helper for safe numeric conversion
+    const safeNum = (val) => {
+      const n = parseFloat(val);
+      return isNaN(n) ? 0 : n;
     };
-    
+
     // REVENUE FILTER: Exclude Quotations AND DC Bills from Financial Metrics strictly
     const validRevenueInvoices = typeFilteredInvoices.filter(inv => {
         // If we are on 'all' tab or 'gst-bills' tab, ONLY count gst-bill revenue
@@ -153,33 +151,48 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
         return false;
     });
 
-    const paidAmount = validRevenueInvoices.filter(inv => inv.paymentStatus === 'paid').reduce((sum, inv) => sum + (inv.grandTotal || 0), 0);
-    // Keep pending amount logic as-is (shows what is outstanding, even for quotes)
-    const pendingAmount = validRevenueInvoices.filter(inv => inv.paymentStatus !== 'paid').reduce((sum, inv) => sum + (inv.grandTotal || 0), 0);
+    // DOCUMENT COUNTS (Include Unpaid Quotes as they are documents)
+    const paymentStats = {
+      paid: validRevenueInvoices.filter(inv => inv.paymentStatus === 'paid').length,
+      partial: validRevenueInvoices.filter(inv => inv.paymentStatus === 'partial').length,
+      unpaid: validRevenueInvoices.filter(inv => inv.paymentStatus === 'unpaid' || !inv.paymentStatus).length,
+      overdue: validRevenueInvoices.filter(inv => inv.paymentStatus === 'overdue').length,
+    };
+
+    const paidAmount = validRevenueInvoices
+      .filter(inv => inv.paymentStatus === 'paid')
+      .reduce((sum, inv) => sum + safeNum(inv.grandTotal), 0);
+
+    const pendingAmount = validRevenueInvoices
+      .filter(inv => inv.paymentStatus !== 'paid')
+      .reduce((sum, inv) => sum + safeNum(inv.grandTotal), 0);
     
     // If no filtered documents at all
     if (typeFilteredInvoices.length === 0) {
        setAnalytics({
         totalInvoices: 0, totalRevenue: 0, totalGST: 0, topProducts: [], topBuyers: [],
-        monthlyTrends: [], gstBillsCount, quotationsCount, dcBillsCount, paymentStats, paidAmount, pendingAmount,
+        monthlyTrends: [], gstBillsCount, quotationsCount, dcBillsCount, slipBillsCount, paymentStats, paidAmount, pendingAmount,
       });
       return;
     }
 
     // --- FINANCIAL METRICS (Using validRevenueInvoices) ---
 
-    const totalRevenue = validRevenueInvoices.reduce((sum, inv) => sum + (inv.grandTotal || 0), 0);
+    const totalRevenue = validRevenueInvoices.reduce((sum, inv) => sum + safeNum(inv.grandTotal), 0);
     const totalGST = validRevenueInvoices.reduce((sum, inv) =>
-      sum + ((inv.cgstAmount || 0) + (inv.sgstAmount || 0) + (inv.igstAmount || 0)), 0
+      sum + (safeNum(inv.cgstAmount) + safeNum(inv.sgstAmount) + safeNum(inv.igstAmount)), 0
     );
 
     const productSales = {};
     validRevenueInvoices.forEach(invoice => {
       (invoice.items || []).forEach(item => {
-        const key = item.description;
-        if (!productSales[key]) productSales[key] = { name: item.description, totalQuantity: 0, totalRevenue: 0 };
-        const itemTotal = item.quantity * item.rate * (1 - (item.discount || 0) / 100);
-        productSales[key].totalQuantity += item.quantity;
+        const key = item.description || 'Other Item';
+        if (!productSales[key]) productSales[key] = { name: key, totalQuantity: 0, totalRevenue: 0 };
+        const qty = safeNum(item.quantity);
+        const rate = safeNum(item.rate);
+        const discount = safeNum(item.discount);
+        const itemTotal = qty * rate * (1 - discount / 100);
+        productSales[key].totalQuantity += qty;
         productSales[key].totalRevenue += itemTotal;
       });
     });
@@ -187,10 +200,11 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
 
     const buyerSales = {};
     validRevenueInvoices.forEach(invoice => {
-      const buyerKey = invoice.buyer?.gstin || invoice.buyer?.name || 'Unknown';
-      if (!buyerSales[buyerKey]) buyerSales[buyerKey] = { name: invoice.buyer?.name || 'Unknown', gstin: invoice.buyer?.gstin || '', totalInvoices: 0, totalRevenue: 0 };
+      const buyerName = invoice.buyerName || invoice.buyer?.name || 'Unknown Buyer';
+      const buyerKey = invoice.buyerGstin || invoice.buyer?.gstin || buyerName;
+      if (!buyerSales[buyerKey]) buyerSales[buyerKey] = { name: buyerName, gstin: invoice.buyerGstin || invoice.buyer?.gstin || '', totalInvoices: 0, totalRevenue: 0 };
       buyerSales[buyerKey].totalInvoices += 1;
-      buyerSales[buyerKey].totalRevenue += invoice.grandTotal || 0;
+      buyerSales[buyerKey].totalRevenue += safeNum(invoice.grandTotal);
     });
     const topBuyers = Object.values(buyerSales).sort((a, b) => b.totalRevenue - a.totalRevenue).slice(0, 5);
 
@@ -200,10 +214,12 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
     for (let i = 11; i >= 0; i--) {
       const date = new Date(now.getFullYear(), now.getMonth() - i, 1);
       const monthInvoices = validRevenueInvoices.filter(inv => {
+        if (!inv.date) return false;
         const invDate = new Date(inv.date);
+        if (isNaN(invDate.getTime())) return false;
         return invDate.getMonth() === date.getMonth() && invDate.getFullYear() === date.getFullYear();
       });
-      const revenue = monthInvoices.reduce((sum, inv) => sum + (inv.grandTotal || 0), 0);
+      const revenue = monthInvoices.reduce((sum, inv) => sum + safeNum(inv.grandTotal), 0);
       
       monthlyTrends.push({
         month: date.toLocaleDateString('en-IN', { month: 'short' }),
@@ -214,7 +230,7 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
     }
 
     // Post-process growth
-    for(let i = 1; i < monthlyTrends.length; i++) {
+    for (let i = 1; i < monthlyTrends.length; i++) {
         const prev = monthlyTrends[i-1].revenue;
         const curr = monthlyTrends[i].revenue;
         if (prev > 0) {
@@ -253,8 +269,9 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
 
   if (!analytics) return <div className="flex justify-center items-center h-64 text-gray-400">Loading data...</div>;
 
-  const maxMonthlyRevenue = Math.max(...analytics.monthlyTrends.map(t => t.revenue), 1);
-  const averageRevenue = analytics.totalRevenue / (analytics.monthlyTrends.filter(m => m.revenue > 0).length || 1);
+  const maxMonthlyRevenue = Math.max(...(analytics.monthlyTrends || []).map(t => t.revenue || 0), 1);
+  const activeMonthsCount = (analytics.monthlyTrends || []).filter(m => m.revenue > 0).length || 1;
+  const averageRevenue = (analytics.totalRevenue || 0) / activeMonthsCount;
 
   // Gradient selection based on tab
   const getGradient = () => {
@@ -305,28 +322,28 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
         <MetricCard
           title="Total Revenue"
-          value={`₹${analytics.totalRevenue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
+          value={`₹${Math.round(analytics.totalRevenue || 0).toLocaleString("en-IN")}`}
           subtitle={`Across ${analytics.totalInvoices} paid docs`}
           color="indigo"
           icon={<svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>}
         />
         <MetricCard
           title="GST Liability"
-          value={`₹${analytics.totalGST.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
+          value={`₹${Math.round(analytics.totalGST || 0).toLocaleString("en-IN")}`}
           subtitle="Tax collected (Valid)"
           color="purple"
           icon={<svg className="w-5 h-5 text-purple-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 14l6-6m-5.5.5h.01m4.99 5h.01M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16l4-2 4 2 4-2 4 2z"></path></svg>}
         />
         <MetricCard
           title="Collections"
-          value={`₹${analytics.paidAmount.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
+          value={`₹${Math.round(analytics.paidAmount || 0).toLocaleString("en-IN")}`}
           subtitle={`${analytics.paymentStats.paid} fully paid`}
           color="green"
           icon={<svg className="w-5 h-5 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>}
         />
         <MetricCard
           title="Outstanding"
-          value={`₹${analytics.pendingAmount.toLocaleString("en-IN", { maximumFractionDigits: 0 })}`}
+          value={`₹${Math.round(analytics.pendingAmount || 0).toLocaleString("en-IN")}`}
           subtitle={`${analytics.paymentStats.unpaid} unpaid`}
           color="red"
           icon={<svg className="w-5 h-5 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>}
@@ -348,7 +365,7 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
                 <p className="  text-sm mt-1">Monthly performance (Valid Revenue Only)</p>
             </div>
             <div className="text-right">
-                <div className="text-2xl font-bold">₹{averageRevenue.toLocaleString(undefined, { maximumFractionDigits: 0 })}</div>
+                <div className="text-2xl font-bold">₹{isNaN(averageRevenue) ? 0 : Math.round(averageRevenue).toLocaleString('en-IN')}</div>
                 <div className="text-xs text-gray-400 font-medium uppercase tracking-wider">Avg. Monthly</div>
             </div>
          </div>
@@ -363,10 +380,10 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
             </div>
 
             {/* Average Line */}
-            {averageRevenue > 0 && (
+            {averageRevenue > 0 && maxMonthlyRevenue > 0 && (
                 <div 
                     className="absolute w-full border-t-2 border-dashed border-gray-300 z-0 opacity-50"
-                    style={{ bottom: `${(averageRevenue / maxMonthlyRevenue) * 100}%` }}
+                    style={{ bottom: `${Math.min((averageRevenue / maxMonthlyRevenue) * 100, 100)}%` }}
                 >
                     <div className="absolute -top-3 right-0 text-[10px] bg-gray-100 px-1 rounded text-gray-500">Avg</div>
                 </div>
@@ -404,11 +421,11 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
                            </div>
                            <div>
                                 <div className="font-bold text-text-title">{product.name}</div>
-                                <div className="text-xs  ">{product.totalQuantity} units sold</div>
+                                <div className="text-xs  ">{Math.round(product.totalQuantity).toLocaleString('en-IN')} units sold</div>
                            </div>
                        </div>
                        <div className="text-right">
-                            <div className="font-bold text-text-title">₹{product.totalRevenue.toLocaleString()}</div>
+                            <div className="font-bold text-text-title">₹{Math.round(product.totalRevenue).toLocaleString('en-IN')}</div>
                        </div>
                    </div>
                ))}
@@ -432,7 +449,7 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
                            </div>
                        </div>
                        <div className="text-right">
-                            <div className="font-bold text-text-title">₹{buyer.totalRevenue.toLocaleString()}</div>
+                            <div className="font-bold text-text-title">₹{Math.round(buyer.totalRevenue).toLocaleString('en-IN')}</div>
                        </div>
                    </div>
                ))}
