@@ -40,6 +40,16 @@ export const STATE_CODES = {
 };
 
 /**
+ * Flat array of all Indian states/UTs with name, code, and padded key.
+ * Useful for dropdowns, autocomplete, and search.
+ */
+export const INDIAN_STATES = Object.entries(STATE_CODES).map(([key, val]) => ({
+  key,
+  name: val.name,
+  code: val.code,
+}));
+
+/**
  * Parses state details from GSTIN.
  * Returns { name: string, code: number } or null.
  */

@@ -1,12 +1,18 @@
 "use client";
-import React, { useState, useEffect } from 'react';
-import { getStateFromGstin, validateGstin } from '@/utils/gstStateHelper';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { getStateFromGstin, validateGstin, INDIAN_STATES } from '@/utils/gstStateHelper';
 
 const ClientForm = ({ invoiceData, handleInputChange }) => {
   const [buyers, setBuyers] = useState([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [isFetchingGst, setIsFetchingGst] = useState(false);
+
+  // State autocomplete
+  const [stateSearchTerm, setStateSearchTerm] = useState('');
+  const [showStateSuggestions, setShowStateSuggestions] = useState(false);
+  const stateInputRef = useRef(null);
+  const stateSuggestionsRef = useRef(null);
 
   useEffect(() => {
     const fetchBuyers = async () => {
@@ -21,6 +27,20 @@ const ClientForm = ({ invoiceData, handleInputChange }) => {
       }
     };
     fetchBuyers();
+  }, []);
+
+  // Close state suggestions on click outside
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (
+        stateInputRef.current &&
+        !stateInputRef.current.contains(e.target)
+      ) {
+        setShowStateSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
   const filteredBuyers = buyers.filter(buyer =>
@@ -369,22 +389,81 @@ const ClientForm = ({ invoiceData, handleInputChange }) => {
 
         {/* State and State Code */}
         <div className="grid grid-cols-3 gap-4">
-          <div className="col-span-2">
-            <label className="block text-xs font-medium   mb-1 ml-1">State</label>
+          <div className="col-span-2 relative" ref={stateInputRef}>
+            <label className="block text-xs font-medium mb-1 ml-1">State</label>
             <input
               type="text"
-              value={invoiceData.buyer.state}
-              onChange={(e) => handleInputChange('buyer', 'state', e.target.value)}
+              value={showStateSuggestions ? stateSearchTerm : (invoiceData.buyer.state || '')}
+              onChange={(e) => {
+                const val = e.target.value;
+                setStateSearchTerm(val);
+                setShowStateSuggestions(true);
+                handleInputChange('buyer', 'state', val);
+              }}
+              onFocus={() => {
+                setStateSearchTerm(invoiceData.buyer.state || '');
+                setShowStateSuggestions(true);
+              }}
               className="w-full p-3 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/50 focus:border-brand-primary transition-all text-text-title text-sm"
-              placeholder="State Name"
+              placeholder="Type state name..."
+              autoComplete="off"
             />
+            {showStateSuggestions && (() => {
+              const query = stateSearchTerm.toLowerCase().trim();
+              const filtered = query
+                ? INDIAN_STATES.filter(s =>
+                    s.name.toLowerCase().includes(query) ||
+                    s.name.toLowerCase().startsWith(query) ||
+                    s.key.startsWith(query) ||
+                    String(s.code).startsWith(query)
+                  )
+                : INDIAN_STATES;
+              return filtered.length > 0 ? (
+                <div
+                  ref={stateSuggestionsRef}
+                  className="absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-48 overflow-y-auto"
+                >
+                  {filtered.map((state) => (
+                    <button
+                      key={state.key}
+                      type="button"
+                      onClick={() => {
+                        handleInputChange('buyer', 'state', state.name);
+                        handleInputChange('buyer', 'stateCode', state.code);
+                        setStateSearchTerm(state.name);
+                        setShowStateSuggestions(false);
+                      }}
+                      className={`w-full text-left px-4 py-2.5 text-sm transition-colors cursor-pointer flex items-center justify-between hover:bg-brand-primary/5 ${
+                        invoiceData.buyer.state === state.name
+                          ? 'bg-brand-primary/10 text-brand-primary font-medium'
+                          : 'text-slate-700'
+                      }`}
+                    >
+                      <span>{state.name}</span>
+                      <span className="text-xs text-slate-400 font-mono">{String(state.code).padStart(2, '0')}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null;
+            })()}
           </div>
           <div>
-            <label className="block text-xs font-medium   mb-1 ml-1">Code</label>
+            <label className="block text-xs font-medium mb-1 ml-1">Code</label>
             <input
               type="number"
               value={invoiceData.buyer.stateCode || ''}
-              onChange={(e) => handleInputChange('buyer', 'stateCode', parseInt(e.target.value) || null)}
+              onChange={(e) => {
+                const code = parseInt(e.target.value) || null;
+                handleInputChange('buyer', 'stateCode', code);
+                // Auto-fill state name from code
+                if (code) {
+                  const paddedCode = String(code).padStart(2, '0');
+                  const match = INDIAN_STATES.find(s => s.key === paddedCode);
+                  if (match) {
+                    handleInputChange('buyer', 'state', match.name);
+                  }
+                }
+              }}
               className="w-full p-3 bg-white border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-brand-primary/50 focus:border-brand-primary transition-all text-text-title text-sm"
               placeholder="33"
             />
