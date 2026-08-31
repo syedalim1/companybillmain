@@ -305,38 +305,28 @@ const ClientForm = ({ invoiceData, handleInputChange }) => {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium mb-1 ml-1">GSTIN</label>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <input
-                  type="text"
-                  value={invoiceData.buyer.gstin}
-                  onChange={(e) => handleGstinChange(e.target.value)}
-                  onKeyDown={handleGstinKeyDown}
-                  className={`w-full p-3 bg-white border rounded-xl focus:outline-none focus:ring-2 transition-all font-mono text-sm text-text-title pr-10 ${
-                    invoiceData.buyer.gstin
-                      ? isGstinValid
-                        ? "border-emerald-500 focus:ring-emerald-500/50"
-                        : "border-amber-500 focus:ring-amber-500/50"
-                      : "border-slate-200     focus:ring-brand-primary/50 focus:border-brand-primary"
-                  }`}
-                  placeholder="GSTIN Number"
-                />
-                {isFetchingGst && (
-                  <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                    <svg className="animate-spin h-5 w-5 text-brand-primary" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                    </svg>
-                  </div>
-                )}
-              </div>
+            <div className="relative">
+              <input
+                type="text"
+                value={invoiceData.buyer.gstin}
+                onChange={(e) => handleGstinChange(e.target.value)}
+                onKeyDown={handleGstinKeyDown}
+                className={`w-full p-3 pr-24 bg-white border rounded-xl focus:outline-none focus:ring-2 transition-all font-mono text-sm text-text-title uppercase tracking-wider ${
+                  invoiceData.buyer.gstin
+                    ? isGstinValid
+                      ? "border-emerald-500 focus:ring-emerald-500/50"
+                      : "border-amber-500 focus:ring-amber-500/50"
+                    : "border-slate-200 focus:ring-brand-primary/50 focus:border-brand-primary"
+                }`}
+                placeholder="GSTIN Number"
+              />
               <button
                 type="button"
                 onClick={() => fetchGstDetails(invoiceData.buyer.gstin)}
                 disabled={!isGstinValid || isFetchingGst}
-                className={`px-4 py-3 rounded-xl text-xs font-semibold transition-all flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
+                className={`absolute right-1.5 top-1/2 -translate-y-1/2 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all flex items-center gap-1.5 cursor-pointer ${
                   isGstinValid && !isFetchingGst
-                    ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 shadow-sm hover:shadow-md'
+                    ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white hover:from-blue-700 hover:to-indigo-700 shadow-sm'
                     : 'bg-slate-100 text-slate-400 cursor-not-allowed'
                 }`}
                 title={!isGstinValid ? 'Enter a valid 15-character GSTIN' : 'Fetch GST details'}
@@ -347,14 +337,14 @@ const ClientForm = ({ invoiceData, handleInputChange }) => {
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                     </svg>
-                    Fetching...
+                    <span>Fetching</span>
                   </>
                 ) : (
                   <>
                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                     </svg>
-                    Fetch GST
+                    <span>Fetch GST</span>
                   </>
                 )}
               </button>
