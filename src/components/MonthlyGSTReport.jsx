@@ -38,10 +38,23 @@ const MonthlyGSTReport = ({ savedInvoices = [] }) => {
       return;
     }
 
+    const targetMonth = Number(selectedMonth);
+    const targetYear = Number(selectedYear);
+
     const gstInvoices = savedInvoices.filter(invoice => {
-      if (invoice.mode !== 'gst-bill') return false;
-      const d = safeDate(invoice.date);
-      return d && (d.getUTCMonth() + 1) === selectedMonth && d.getUTCFullYear() === selectedYear;
+      if (!invoice) return false;
+      // Support both flat invoice.mode and nested invoice.invoiceDetails.mode
+      const mode = (invoice.mode || invoice.invoiceDetails?.mode || 'gst-bill').toString().toLowerCase();
+      if (mode !== 'gst-bill') return false;
+
+      const rawDate = invoice.date || invoice.invoiceDetails?.date;
+      const d = safeDate(rawDate);
+      if (!d) return false;
+
+      // Timezone-safe month & year comparison (check both UTC and Local date)
+      const matchesUTC = (d.getUTCMonth() + 1) === targetMonth && d.getUTCFullYear() === targetYear;
+      const matchesLocal = (d.getMonth() + 1) === targetMonth && d.getFullYear() === targetYear;
+      return matchesUTC || matchesLocal;
     });
 
     if (gstInvoices.length === 0) {
@@ -76,12 +89,13 @@ const MonthlyGSTReport = ({ savedInvoices = [] }) => {
     const b2cInvoices = [];
 
     gstInvoices.forEach(invoice => {
-      const grandTotal = safeNum(invoice.grandTotal);
-      const subtotal = safeNum(invoice.subtotal);
-      const cgst = safeNum(invoice.cgstAmount);
-      const sgst = safeNum(invoice.sgstAmount);
-      const igst = safeNum(invoice.igstAmount);
+      // Support both flat invoice properties and nested invoice.totals / invoice.invoiceDetails
+      const subtotal = safeNum(invoice.subtotal ?? invoice.totals?.subtotal ?? invoice.totals?.taxableAmount);
+      const cgst = safeNum(invoice.cgstAmount ?? invoice.totals?.cgstAmount ?? invoice.totals?.cgst ?? invoice.cgst);
+      const sgst = safeNum(invoice.sgstAmount ?? invoice.totals?.sgstAmount ?? invoice.totals?.sgst ?? invoice.sgst);
+      const igst = safeNum(invoice.igstAmount ?? invoice.totals?.igstAmount ?? invoice.totals?.igst ?? invoice.igst);
       const totalGST = cgst + sgst + igst;
+      const grandTotal = safeNum(invoice.grandTotal ?? invoice.totals?.grandTotal ?? invoice.totals?.total ?? (subtotal + totalGST));
 
       totalSales += grandTotal;
       totalTaxableValue += subtotal;
@@ -89,22 +103,28 @@ const MonthlyGSTReport = ({ savedInvoices = [] }) => {
       totalSGST += sgst;
       totalIGST += igst;
 
-      const roundOff = invoice.roundOff !== undefined ? safeNum(invoice.roundOff) : (grandTotal - (subtotal + totalGST));
+      const roundOff = invoice.roundOff !== undefined 
+        ? safeNum(invoice.roundOff) 
+        : (invoice.totals?.roundOff !== undefined ? safeNum(invoice.totals.roundOff) : (grandTotal - (subtotal + totalGST)));
 
-      const buyerName = invoice.buyerName || invoice.buyer?.name || 'Unknown Buyer';
-      const buyerGSTIN = (invoice.buyerGstin || invoice.buyer?.gstin || '').trim();
+      const buyerName = (invoice.buyerName || invoice.buyer?.name || 'Unknown Buyer').toString().trim();
+      const buyerGSTIN = (invoice.buyerGstin || invoice.buyerGSTIN || invoice.buyer?.gstin || invoice.buyer?.gstNo || '').toString().trim();
       const isB2B = buyerGSTIN.length > 3;
 
+      const rawDate = invoice.date || invoice.invoiceDetails?.date;
+      const invoiceNo = invoice.invoiceNo || invoice.invoiceDetails?.invoiceNo || 'N/A';
+      const placeOfSupply = (invoice.placeOfSupply || invoice.invoiceDetails?.placeOfSupply || invoice.buyerState || invoice.buyer?.state || 'N/A').toString().trim();
+
       const invRecord = {
-        id: invoice.id,
-        invoiceNo: invoice.invoiceNo || 'N/A',
-        date: invoice.date,
+        id: invoice.id || invoice._id || Math.random().toString(),
+        invoiceNo,
+        date: rawDate,
         buyerName,
         buyerGSTIN: buyerGSTIN || 'N/A',
-        buyerAddress: invoice.buyer?.address || 'N/A',
-        buyerState: invoice.buyerState || invoice.buyer?.state || 'N/A',
-        buyerStateCode: invoice.buyerStateCode || invoice.buyer?.stateCode || 'N/A',
-        placeOfSupply: invoice.placeOfSupply || invoice.buyerState || invoice.buyer?.state || 'N/A',
+        buyerAddress: (invoice.buyer?.address || invoice.buyerAddress || 'N/A').toString().trim(),
+        buyerState: (invoice.buyerState || invoice.buyer?.state || 'N/A').toString().trim(),
+        buyerStateCode: (invoice.buyerStateCode || invoice.buyer?.stateCode || 'N/A').toString().trim(),
+        placeOfSupply,
         taxableValue: subtotal,
         cgstAmount: cgst,
         sgstAmount: sgst,
@@ -126,8 +146,8 @@ const MonthlyGSTReport = ({ savedInvoices = [] }) => {
         buyerMap.set(buyerKey, {
           name: buyerName,
           gstin: buyerGSTIN || 'N/A',
-          state: invoice.buyerState || invoice.buyer?.state || 'N/A',
-          stateCode: invoice.buyerStateCode || invoice.buyer?.stateCode || 'N/A',
+          state: (invoice.buyerState || invoice.buyer?.state || 'N/A').toString().trim(),
+          stateCode: (invoice.buyerStateCode || invoice.buyer?.stateCode || 'N/A').toString().trim(),
           totalInvoices: 0,
           totalSales: 0,
           totalTaxableValue: 0,
@@ -147,22 +167,28 @@ const MonthlyGSTReport = ({ savedInvoices = [] }) => {
       b.totalGST += totalGST;
 
       // HSN aggregation
-      (invoice.items || []).forEach(item => {
-        const code = (item.hsn || item.sac || 'Unclassified').trim();
-        const type = item.hsn ? 'HSN' : item.sac ? 'SAC' : '—';
+      const itemsList = invoice.items || invoice.itemList || [];
+      (Array.isArray(itemsList) ? itemsList : []).forEach(item => {
+        if (!item) return;
+        const rawCode = (item.hsn || item.sac || item.hsnCode || '').toString().trim();
+        const code = rawCode || 'Unclassified';
+        const type = item.hsn || item.hsnCode ? 'HSN' : item.sac ? 'SAC' : '—';
         const hsnKey = `${type}:${code}`;
 
         const qty = safeNum(item.quantity);
-        const rate = safeNum(item.rate);
+        const rate = safeNum(item.rate || item.unitPrice);
         const disc = safeNum(item.discount);
-        const unit = (item.unit || 'units').trim().toLowerCase();
-        const lineTaxable = qty * rate * (1 - disc / 100);
+        const unit = (item.unit || 'units').toString().trim().toLowerCase();
+        
+        // Calculate line taxable value cleanly
+        const calculatedTaxable = qty * rate * (1 - disc / 100);
+        const lineTaxable = safeNum(item.amount ?? item.taxableAmount ?? calculatedTaxable);
 
         if (!hsnMap.has(hsnKey)) {
           hsnMap.set(hsnKey, {
             code,
             type,
-            description: item.description || 'N/A',
+            description: (item.description || item.name || 'N/A').toString().trim(),
             unitMap: {},
             taxableValue: 0,
             cgst: 0,
@@ -172,19 +198,29 @@ const MonthlyGSTReport = ({ savedInvoices = [] }) => {
           });
         }
         const h = hsnMap.get(hsnKey);
+        if (h.description === 'N/A' && (item.description || item.name)) {
+          h.description = (item.description || item.name).toString().trim();
+        }
+
         h.unitMap[unit] = (h.unitMap[unit] || 0) + qty;
         h.taxableValue += lineTaxable;
 
-        if (subtotal > 0) {
+        // Extract or proportionally compute item GST breakdown
+        let lineCGST = safeNum(item.cgstAmount);
+        let lineSGST = safeNum(item.sgstAmount);
+        let lineIGST = safeNum(item.igstAmount);
+
+        if (!lineCGST && !lineSGST && !lineIGST && subtotal > 0) {
           const ratio = lineTaxable / subtotal;
-          const lineCGST = cgst * ratio;
-          const lineSGST = sgst * ratio;
-          const lineIGST = igst * ratio;
-          h.cgst += lineCGST;
-          h.sgst += lineSGST;
-          h.igst += lineIGST;
-          h.totalTax += (lineCGST + lineSGST + lineIGST);
+          lineCGST = cgst * ratio;
+          lineSGST = sgst * ratio;
+          lineIGST = igst * ratio;
         }
+
+        h.cgst += lineCGST;
+        h.sgst += lineSGST;
+        h.igst += lineIGST;
+        h.totalTax += (lineCGST + lineSGST + lineIGST);
       });
     });
 

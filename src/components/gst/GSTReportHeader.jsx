@@ -1,5 +1,5 @@
 import React from 'react';
-import { exportProfessionalGSTExcel, exportGSTCSV } from './GSTExcelExporter';
+import { exportProfessionalGSTExcel, exportGSTCSV, exportGSTJSON } from './GSTExcelExporter';
 
 const CalendarIcon = () => (
   <svg className="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -61,6 +61,13 @@ const GSTReportHeader = ({ selectedMonth, setSelectedMonth, selectedYear, setSel
             className="px-3 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl text-xs hover:bg-slate-200 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
           >
             🖨️ Print Report
+          </button>
+          <button
+            onClick={() => exportGSTJSON({ monthlyData, selectedMonth, selectedYear })}
+            disabled={!monthlyData || monthlyData.totalInvoices === 0}
+            className="px-3 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl text-xs hover:bg-slate-200 transition-all disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+          >
+            {'{ }'} JSON
           </button>
           <button
             onClick={() => exportGSTCSV({ monthlyData, selectedMonth, selectedYear })}

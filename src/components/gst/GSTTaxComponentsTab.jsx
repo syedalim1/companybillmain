@@ -10,9 +10,9 @@ const GSTTaxComponentsTab = ({ monthlyData }) => {
     if (!searchTerm.trim()) return true;
     const term = searchTerm.toLowerCase();
     return (
-      inv.invoiceNo.toLowerCase().includes(term) ||
-      inv.buyerName.toLowerCase().includes(term) ||
-      inv.buyerGSTIN.toLowerCase().includes(term)
+      (inv.invoiceNo || '').toString().toLowerCase().includes(term) ||
+      (inv.buyerName || '').toString().toLowerCase().includes(term) ||
+      (inv.buyerGSTIN || '').toString().toLowerCase().includes(term)
     );
   });
 
