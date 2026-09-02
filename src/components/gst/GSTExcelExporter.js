@@ -1,15 +1,24 @@
 import ExcelJS from 'exceljs';
-import { safeDate, safeNum } from '@/hooks/useAnalyticsEngine';
+import { safeDate } from '@/hooks/useAnalyticsEngine';
 
 const BRAND = {
-  headerFill: 'FF1F4E78',   // dark blue
-  headerFont: 'FFFFFFFF',   // white
-  accentFill: 'FF2E75B6',   // mid blue (section titles)
-  accentFont: 'FFFFFFFF',
-  totalFill: 'FFFFD966',    // gold (totals row)
-  totalFont: 'FF1F1F1F',
-  altRow: 'FFF2F6FB',       // very light blue (zebra striping)
+  bannerTopBg: 'FF0F2027',    // Midnight Dark Blue
+  bannerMidBg: 'FF1F3A52',    // Royal Navy Blue
+  bannerTitleBg: 'FF2C3E50',  // Slate Blue
+  bannerSubBg: 'FF34495E',    // Dark Metallic Blue
+
+  titleText: 'FFFFD166',      // Bright Golden Accent
+  whiteText: 'FFFFFFFF',      // White
+  subText: 'FFD0E1F9',        // Ice Blue text
+  mutedText: 'FFB0C4DE',      // Soft Sky Grey
+
+  sectionHeaderFill: 'FF1E3C72', // Royal Indigo
+  tableHeaderFill: 'FF2A5298',  // Sapphire Blue
+  totalFill: 'FFFFD166',        // Vibrant Warm Gold
+  totalFont: 'FF1A1A1A',        // Dark Charcoal
+  altRowFill: 'FFF4F8FC',       // Soft Ice Blue Zebra Stripe
   border: 'FFB7C6D9',
+  goldBorder: 'FFD4AF37',
 };
 
 const money = (v) => {
@@ -50,51 +59,97 @@ const thinBorder = {
   right: { style: 'thin', color: { argb: BRAND.border } },
 };
 
-/** Adds a big merged title banner at the top of a sheet */
-function addBanner(ws, title, subtitleLines = [], colSpan = 8) {
-  ws.mergeCells(1, 1, 1, colSpan);
-  const titleCell = ws.getCell(1, 1);
-  titleCell.value = title;
-  titleCell.font = { bold: true, size: 14, color: { argb: BRAND.headerFont } };
-  titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.headerFill } };
-  titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-  ws.getRow(1).height = 28;
-
-  subtitleLines.forEach((line, i) => {
-    const rowIdx = i + 2;
-    ws.mergeCells(rowIdx, 1, rowIdx, colSpan);
-    const c = ws.getCell(rowIdx, 1);
-    c.value = line;
-    c.font = { italic: true, size: 10, color: { argb: 'FF444444' } };
-    c.alignment = { horizontal: 'center' };
+/** Adds a professional multi-row Company Header Banner at the top of a worksheet */
+function addCompanyHeaderBanner(ws, sheetTitle, companyInfo = {}, periodTitle = '', colSpan = 8) {
+  const companyName = companyInfo.name || 'INDIAN MAKE STEEL INDUSTRIES';
+  const companyAddress = companyInfo.address || 'NO.K-6, Sidco Industrial Estate, Kurichi, Coimbatore - 641021';
+  const companyGSTIN = companyInfo.gstin || '33AAECI9325R1Z3';
+  const companyState = companyInfo.state || 'Tamil Nadu';
+  const generatedDate = new Date().toLocaleDateString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
   });
 
-  return subtitleLines.length + 3; // next free row number
+  // Row 1: Company Name (Large Gold Accent Typography)
+  ws.mergeCells(1, 1, 1, colSpan);
+  const r1 = ws.getCell(1, 1);
+  r1.value = companyName.toUpperCase();
+  r1.font = { bold: true, size: 15, color: { argb: BRAND.titleText } };
+  r1.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.bannerTopBg } };
+  r1.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(1).height = 30;
+
+  // Row 2: Company Address, GSTIN & State
+  ws.mergeCells(2, 1, 2, colSpan);
+  const r2 = ws.getCell(2, 1);
+  r2.value = `${companyAddress}  |  GSTIN: ${companyGSTIN}  |  State: ${companyState}`;
+  r2.font = { italic: true, size: 9.5, color: { argb: BRAND.subText } };
+  r2.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.bannerMidBg } };
+  r2.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(2).height = 18;
+
+  // Row 3: Sheet / Report Title Banner
+  ws.mergeCells(3, 1, 3, colSpan);
+  const r3 = ws.getCell(3, 1);
+  r3.value = sheetTitle;
+  r3.font = { bold: true, size: 11.5, color: { argb: BRAND.whiteText } };
+  r3.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.bannerTitleBg } };
+  r3.alignment = { horizontal: 'center', vertical: 'middle' };
+  ws.getRow(3).height = 24;
+
+  // Row 4: Period & Generation Audit Stamp
+  ws.mergeCells(4, 1, 4, colSpan);
+  const r4 = ws.getCell(4, 1);
+  r4.value = `Taxation Period: ${periodTitle}  |  Generated: ${generatedDate}  |  Source: Verified System Audit Data`;
+  r4.font = { italic: true, size: 9, color: { argb: BRAND.mutedText } };
+  r4.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.bannerSubBg } };
+  r4.alignment = { horizontal: 'center', vertical: 'middle' };
+  r4.border = { bottom: { style: 'medium', color: { argb: BRAND.goldBorder } } };
+  ws.getRow(4).height = 18;
+
+  ws.getRow(5).height = 10; // Spacing row
+
+  return 6; // Next free row number
 }
 
-/** Styles a header row */
+/** Styles a section title header row */
+function styleSectionHeader(ws, rowNum, titleText, colSpan = 8) {
+  ws.mergeCells(rowNum, 1, rowNum, colSpan);
+  const cell = ws.getCell(rowNum, 1);
+  cell.value = titleText;
+  cell.font = { bold: true, size: 11, color: { argb: BRAND.whiteText } };
+  cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.sectionHeaderFill } };
+  cell.alignment = { horizontal: 'left', vertical: 'middle' };
+  ws.getRow(rowNum).height = 24;
+}
+
+/** Styles a table column header row */
 function styleHeaderRow(ws, rowNum, colCount) {
   const row = ws.getRow(rowNum);
   for (let c = 1; c <= colCount; c++) {
     const cell = row.getCell(c);
-    cell.font = { bold: true, color: { argb: BRAND.accentFont } };
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.accentFill } };
+    cell.font = { bold: true, size: 10, color: { argb: BRAND.whiteText } };
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.tableHeaderFill } };
     cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
     cell.border = thinBorder;
   }
   row.height = 22;
 }
 
-/** Styles a totals row */
+/** Styles a financial totals row with accounting double-line bottom border */
 function styleTotalRow(ws, rowNum, colCount) {
   const row = ws.getRow(rowNum);
   for (let c = 1; c <= colCount; c++) {
     const cell = row.getCell(c);
-    cell.font = { bold: true, color: { argb: BRAND.totalFont } };
+    cell.font = { bold: true, size: 10.5, color: { argb: BRAND.totalFont } };
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.totalFill } };
-    cell.border = thinBorder;
+    cell.border = {
+      top: { style: 'thin', color: { argb: 'FF856404' } },
+      bottom: { style: 'double', color: { argb: 'FF856404' } },
+      left: { style: 'thin', color: { argb: BRAND.border } },
+      right: { style: 'thin', color: { argb: BRAND.border } },
+    };
   }
-  row.height = 20;
+  row.height = 22;
 }
 
 /** Zebra-stripes data rows + borders + currency format on given money columns */
@@ -105,7 +160,7 @@ function styleDataRows(ws, startRow, endRow, colCount, moneyCols = []) {
     for (let c = 1; c <= colCount; c++) {
       const cell = row.getCell(c);
       cell.border = thinBorder;
-      if (isAlt) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.altRow } };
+      if (isAlt) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.altRowFill } };
       if (moneyCols.includes(c)) {
         cell.numFmt = '₹ #,##0.00';
         cell.alignment = { horizontal: 'right' };
@@ -120,7 +175,7 @@ function autoFitColumns(ws, headers = []) {
     let maxContentLen = 0;
 
     column.eachCell({ includeEmpty: false }, (cell) => {
-      if (cell.row <= 2) return; // Skip main title banners
+      if (cell.row <= 4) return; // Ignore top company header banner rows
       if (cell.isMerged && cell.address !== cell.master.address) return;
 
       let str = '';
@@ -149,7 +204,7 @@ function autoFitColumns(ws, headers = []) {
     const finalLen = Math.max(maxContentLen, headerText.length);
 
     // Padding +6 chars for filter dropdown arrows & clean padding
-    column.width = Math.min(Math.max(finalLen + 6, 12), 55);
+    column.width = Math.min(Math.max(finalLen + 6, 13), 55);
   });
 }
 
@@ -160,28 +215,40 @@ export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, s
   }
 
   const wb = new ExcelJS.Workbook();
-  wb.creator = 'Indian Make Steel Industries';
+  wb.creator = monthlyData.companyInfo?.name || 'Indian Make Steel Industries';
   wb.created = new Date();
 
+  const companyInfo = monthlyData.companyInfo || {};
   const periodTitle = `${monthLabel || selectedMonth} ${selectedYear}`;
-  const generatedDate = new Date().toLocaleDateString('en-IN', {
-    day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
-  });
+
+  // Sort invoices chronologically (Date Ascending, then Invoice Number Ascending)
+  const sortInvoices = (list = []) => {
+    return [...list].sort((a, b) => {
+      const dA = safeDate(a.date)?.getTime() || 0;
+      const dB = safeDate(b.date)?.getTime() || 0;
+      if (dA !== dB) return dA - dB;
+
+      const numA = Number(String(a.invoiceNo || '').replace(/\D/g, ''));
+      const numB = Number(String(b.invoiceNo || '').replace(/\D/g, ''));
+      if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+        return numA - numB;
+      }
+      return String(a.invoiceNo || '').localeCompare(String(b.invoiceNo || ''));
+    });
+  };
 
   // ═══════════════════════════ SHEET 1: EXECUTIVE SUMMARY ═══════════════════════════
-  const wsSummary = wb.addWorksheet('Executive Summary', { views: [{ state: 'frozen', ySplit: 0 }] });
-  let r = addBanner(
+  const wsSummary = wb.addWorksheet('Executive Summary');
+  let r = addCompanyHeaderBanner(
     wsSummary,
-    'MONTHLY GSTR-1 TAX COMPLIANCE EXECUTIVE REPORT',
-    [`Taxation Period: ${periodTitle}`, `Generated: ${generatedDate}  |  Source: Official Verified Billing System Data`],
+    'MONTHLY GSTR-1 TAX COMPLIANCE EXECUTIVE SUMMARY',
+    companyInfo,
+    periodTitle,
     8
   );
 
   // KPI section
-  wsSummary.getCell(r, 1).value = '1. FINANCIAL & TAXATION OBLIGATION KPI SUMMARY';
-  wsSummary.mergeCells(r, 1, r, 8);
-  wsSummary.getCell(r, 1).font = { bold: true, size: 12, color: { argb: BRAND.headerFont } };
-  wsSummary.getCell(r, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.headerFill } };
+  styleSectionHeader(wsSummary, r, ' 1. FINANCIAL & TAXATION OBLIGATION KPI SUMMARY', 8);
   r += 1;
 
   const kpiHeaderRow = r;
@@ -202,7 +269,6 @@ export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, s
   styleDataRows(wsSummary, kpiStart, r - 1, 2, [2]);
 
   // Invoice Count row (formatted as integer without Rupee sign)
-  const countRow = r;
   wsSummary.getRow(r).values = ['Total Tax Invoices Issued', Number(monthlyData.totalInvoices)];
   wsSummary.getCell(r, 1).border = thinBorder;
   wsSummary.getCell(r, 2).border = thinBorder;
@@ -212,10 +278,7 @@ export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, s
   r += 2;
 
   // B2B vs B2C classification
-  wsSummary.getCell(r, 1).value = '2. GSTR-1 COMPLIANCE CLASSIFICATION (B2B vs B2C)';
-  wsSummary.mergeCells(r, 1, r, 8);
-  wsSummary.getCell(r, 1).font = { bold: true, size: 12, color: { argb: BRAND.headerFont } };
-  wsSummary.getCell(r, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.headerFill } };
+  styleSectionHeader(wsSummary, r, ' 2. GSTR-1 COMPLIANCE CLASSIFICATION (B2B vs B2C)', 8);
   r += 1;
 
   const classHeaders = ['Classification Category', 'Invoices', 'Taxable Value (₹)', 'CGST (₹)', 'SGST (₹)', 'IGST (₹)', 'Total GST (₹)', 'Billed Value (₹)'];
@@ -239,25 +302,16 @@ export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, s
   autoFitColumns(wsSummary, classHeaders);
   wsSummary.views = [{ state: 'frozen', ySplit: kpiHeaderRow }];
 
-  // Sort invoices chronologically (Date Ascending, then Invoice Number Ascending)
-  const sortInvoices = (list = []) => {
-    return [...list].sort((a, b) => {
-      const dA = safeDate(a.date)?.getTime() || 0;
-      const dB = safeDate(b.date)?.getTime() || 0;
-      if (dA !== dB) return dA - dB;
-
-      const numA = Number(String(a.invoiceNo || '').replace(/\D/g, ''));
-      const numB = Number(String(b.invoiceNo || '').replace(/\D/g, ''));
-      if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
-        return numA - numB;
-      }
-      return String(a.invoiceNo || '').localeCompare(String(b.invoiceNo || ''));
-    });
-  };
-
   // ═══════════════════════════ SHEET 2: GSTR-1 B2B ═══════════════════════════
   const wsB2B = wb.addWorksheet('GSTR-1 B2B');
-  let rb = addBanner(wsB2B, 'GSTR-1 TABLE 4A: B2B REGISTERED TAX INVOICES (WITH VALID GSTIN)', [`Period: ${periodTitle}  |  Total B2B Invoices: ${monthlyData.b2b?.count || 0}`], 12);
+  let rb = addCompanyHeaderBanner(
+    wsB2B,
+    'GSTR-1 TABLE 4A: B2B REGISTERED TAX INVOICES (WITH VALID GSTIN)',
+    companyInfo,
+    periodTitle,
+    12
+  );
+
   const b2bHeaders = ['S.No', 'Invoice No', 'Date', 'Customer GSTIN', 'Customer Name', 'Place of Supply', 'Taxable Value (₹)', 'CGST (₹)', 'SGST (₹)', 'IGST (₹)', 'Total GST (₹)', 'Grand Total (₹)'];
   wsB2B.getRow(rb).values = b2bHeaders;
   styleHeaderRow(wsB2B, rb, 12);
@@ -298,7 +352,14 @@ export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, s
 
   // ═══════════════════════════ SHEET 3: GSTR-1 B2C ═══════════════════════════
   const wsB2C = wb.addWorksheet('GSTR-1 B2C');
-  let rc = addBanner(wsB2C, 'GSTR-1 TABLE 7: B2C RETAIL & UNREGISTERED INVOICES', [`Period: ${periodTitle}  |  Total B2C Invoices: ${monthlyData.b2c?.count || 0}`], 11);
+  let rc = addCompanyHeaderBanner(
+    wsB2C,
+    'GSTR-1 TABLE 7: B2C RETAIL & UNREGISTERED INVOICES',
+    companyInfo,
+    periodTitle,
+    11
+  );
+
   const b2cHeaders = ['S.No', 'Invoice No', 'Date', 'Customer Name', 'Place of Supply', 'Taxable Value (₹)', 'CGST (₹)', 'SGST (₹)', 'IGST (₹)', 'Total GST (₹)', 'Grand Total (₹)'];
   wsB2C.getRow(rc).values = b2cHeaders;
   styleHeaderRow(wsB2C, rc, 11);
@@ -339,7 +400,14 @@ export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, s
 
   // ═══════════════════════════ SHEET 4: BUYER SUMMARY ═══════════════════════════
   const wsBuyers = wb.addWorksheet('Buyer Summary');
-  let ru = addBanner(wsBuyers, 'CUSTOMER-WISE AGGREGATED GST BREAKDOWN', [`Period: ${periodTitle}  |  Total Unique Clients: ${(monthlyData.buyerBreakdown || []).length}`], 11);
+  let ru = addCompanyHeaderBanner(
+    wsBuyers,
+    'CUSTOMER-WISE AGGREGATED GST BREAKDOWN',
+    companyInfo,
+    periodTitle,
+    11
+  );
+
   const buyerHeaders = ['S.No', 'Customer Name', 'GSTIN', 'State', 'Invoices Issued', 'Taxable Value (₹)', 'CGST (₹)', 'SGST (₹)', 'IGST (₹)', 'Total Tax (₹)', 'Grand Billed Total (₹)'];
   wsBuyers.getRow(ru).values = buyerHeaders;
   styleHeaderRow(wsBuyers, ru, 11);
@@ -376,7 +444,14 @@ export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, s
   const stateRows = [...stateMap.values()].sort((a, b) => b.grandTotal - a.grandTotal);
 
   const wsState = wb.addWorksheet('State Tax Summary');
-  let rs = addBanner(wsState, 'STATE-WISE (PLACE OF SUPPLY) GST BREAKDOWN', [`Period: ${periodTitle}`], 9);
+  let rs = addCompanyHeaderBanner(
+    wsState,
+    'STATE-WISE (PLACE OF SUPPLY) GST BREAKDOWN',
+    companyInfo,
+    periodTitle,
+    9
+  );
+
   const stateHeaders = ['S.No', 'State Name', 'Invoices', 'Taxable Value (₹)', 'CGST (₹)', 'SGST (₹)', 'IGST (₹)', 'Total Tax (₹)', 'Billed Total (₹)'];
   wsState.getRow(rs).values = stateHeaders;
   styleHeaderRow(wsState, rs, 9);

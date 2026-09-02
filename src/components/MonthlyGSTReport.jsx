@@ -199,7 +199,19 @@ const MonthlyGSTReport = ({ savedInvoices = [] }) => {
       const sortedB2C = sortInvoicesChronologically(b2cInvoices);
       const sortedAll = sortInvoicesChronologically(invoiceBreakdown);
 
+      // Extract seller company profile details for official reporting
+      const firstInv = gstInvoices[0]?.rawInvoice || gstInvoices[0] || {};
+      const companyInfo = {
+        name: (firstInv.sellerName || firstInv.seller?.name || 'INDIAN MAKE STEEL INDUSTRIES').toString().trim(),
+        address: (firstInv.sellerAddress || firstInv.seller?.address || 'NO.K-6, Sidco Industrial Estate, Kurichi, Coimbatore - 641021').toString().trim(),
+        gstin: (firstInv.sellerGstin || firstInv.seller?.gstin || '33AAECI9325R1Z3').toString().trim(),
+        contact: (firstInv.sellerContact || firstInv.seller?.contact || '').toString().trim(),
+        email: (firstInv.sellerEmail || firstInv.seller?.email || '').toString().trim(),
+        state: (firstInv.sellerState || firstInv.seller?.state || 'Tamil Nadu').toString().trim(),
+      };
+
       setMonthlyData({
+        companyInfo,
         totalInvoices: gstInvoices.length,
         totalSales,
         totalTaxableValue,
