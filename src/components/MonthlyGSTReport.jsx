@@ -1,28 +1,22 @@
 import React, { useState, useEffect } from 'react';
-import * as XLSX from 'xlsx';
+import GSTReportHeader from './gst/GSTReportHeader';
+import GSTSummaryCards from './gst/GSTSummaryCards';
+import GSTTaxComponentsTab from './gst/GSTTaxComponentsTab';
+import GSTB2BTab from './gst/GSTB2BTab';
+import GSTB2CTab from './gst/GSTB2CTab';
+import GSTHSNTab from './gst/GSTHSNTab';
+import GSTBuyerSummaryTab from './gst/GSTBuyerSummaryTab';
+import { safeNum, safeDate, formatUnitQty } from '@/hooks/useAnalyticsEngine';
 
-// --- Icons ---
-const CalendarIcon = () => (
-  <svg className="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-  </svg>
-);
+// ═══════════════════════════════════════════════════════════════════════════════
+// MAIN SHELL COMPONENT
+// ═══════════════════════════════════════════════════════════════════════════════
 
-const DownloadIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-  </svg>
-);
-
-const InvoiceIcon = () => (
-  <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-  </svg>
-);
-
-const MonthlyGSTReport = ({ savedInvoices, invoiceData }) => {
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+const MonthlyGSTReport = ({ savedInvoices = [] }) => {
+  const now = new Date();
+  const [selectedMonth, setSelectedMonth] = useState(now.getUTCMonth() + 1);
+  const [selectedYear, setSelectedYear] = useState(now.getUTCFullYear());
+  const [activeTab, setActiveTab] = useState('summary');
   const [monthlyData, setMonthlyData] = useState(null);
 
   const months = [
@@ -32,22 +26,23 @@ const MonthlyGSTReport = ({ savedInvoices, invoiceData }) => {
     { value: 10, label: 'October' }, { value: 11, label: 'November' }, { value: 12, label: 'December' },
   ];
 
-  const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i);
+  const years = Array.from({ length: 5 }, (_, i) => now.getUTCFullYear() - i);
 
   useEffect(() => {
     calculateMonthlyGST();
   }, [selectedMonth, selectedYear, savedInvoices]);
 
   const calculateMonthlyGST = () => {
-    // Filter invoices for the selected month and year
-    const filteredInvoices = savedInvoices.filter(invoice => {
-      const invoiceDate = new Date(invoice.date);
-      return invoiceDate.getMonth() + 1 === selectedMonth && invoiceDate.getFullYear() === selectedYear;
-    });
+    if (!savedInvoices || !Array.isArray(savedInvoices)) {
+      setMonthlyData(null);
+      return;
+    }
 
-    // Only include GST bills and quotations with GST
-    // Only include GST bills (Strictly exclude all quotations as per requirement)
-    const gstInvoices = filteredInvoices.filter(invoice => invoice.mode === 'gst-bill');
+    const gstInvoices = savedInvoices.filter(invoice => {
+      if (invoice.mode !== 'gst-bill') return false;
+      const d = safeDate(invoice.date);
+      return d && (d.getUTCMonth() + 1) === selectedMonth && d.getUTCFullYear() === selectedYear;
+    });
 
     if (gstInvoices.length === 0) {
       setMonthlyData({
@@ -58,8 +53,10 @@ const MonthlyGSTReport = ({ savedInvoices, invoiceData }) => {
         totalSGST: 0,
         totalIGST: 0,
         totalGST: 0,
-        hsnBreakdown: {},
-        buyerBreakdown: {},
+        b2b: { count: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, total: 0, grandTotal: 0, invoices: [] },
+        b2c: { count: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, total: 0, grandTotal: 0, invoices: [] },
+        hsnBreakdown: [],
+        buyerBreakdown: [],
         invoiceBreakdown: [],
       });
       return;
@@ -70,49 +67,67 @@ const MonthlyGSTReport = ({ savedInvoices, invoiceData }) => {
     let totalCGST = 0;
     let totalSGST = 0;
     let totalIGST = 0;
-    let hsnBreakdown = {};
-    let buyerBreakdown = {};
-    let invoiceBreakdown = [];
+
+    const invoiceBreakdown = [];
+    const buyerMap = new Map();
+    const hsnMap = new Map();
+
+    const b2bInvoices = [];
+    const b2cInvoices = [];
 
     gstInvoices.forEach(invoice => {
-      totalSales += invoice.grandTotal || 0;
+      const grandTotal = safeNum(invoice.grandTotal);
+      const subtotal = safeNum(invoice.subtotal);
+      const cgst = safeNum(invoice.cgstAmount);
+      const sgst = safeNum(invoice.sgstAmount);
+      const igst = safeNum(invoice.igstAmount);
+      const totalGST = cgst + sgst + igst;
 
-      const taxableAmount = invoice.subtotal || 0;
-      const totalGST = (invoice.cgstAmount || 0) + (invoice.sgstAmount || 0) + (invoice.igstAmount || 0);
-      const grandTotal = invoice.grandTotal || 0;
-      // Derive roundOff exactly as requested: saved value if exists, else diff
-      const roundOff = invoice.roundOff !== undefined ? invoice.roundOff : (grandTotal - (taxableAmount + totalGST));
-      
-      // Invoice-wise breakdown
-      invoiceBreakdown.push({
-        invoiceNo: invoice.invoiceNo,
+      totalSales += grandTotal;
+      totalTaxableValue += subtotal;
+      totalCGST += cgst;
+      totalSGST += sgst;
+      totalIGST += igst;
+
+      const roundOff = invoice.roundOff !== undefined ? safeNum(invoice.roundOff) : (grandTotal - (subtotal + totalGST));
+
+      const buyerName = invoice.buyerName || invoice.buyer?.name || 'Unknown Buyer';
+      const buyerGSTIN = (invoice.buyerGstin || invoice.buyer?.gstin || '').trim();
+      const isB2B = buyerGSTIN.length > 3;
+
+      const invRecord = {
+        id: invoice.id,
+        invoiceNo: invoice.invoiceNo || 'N/A',
         date: invoice.date,
-        buyerName: invoice.buyer?.name || 'N/A',
-        buyerGSTIN: invoice.buyer?.gstin || 'N/A',
+        buyerName,
+        buyerGSTIN: buyerGSTIN || 'N/A',
         buyerAddress: invoice.buyer?.address || 'N/A',
-        buyerState: invoice.buyer?.state || 'N/A',
-        buyerStateCode: invoice.buyer?.stateCode || 'N/A',
-        buyerContact: invoice.buyer?.contact || 'N/A',
-        placeOfSupply: invoice.placeOfSupply || invoice.buyer?.state || 'N/A',
-        taxableValue: taxableAmount,
-        cgstAmount: invoice.cgstAmount || 0,
-        sgstAmount: invoice.sgstAmount || 0,
-        igstAmount: invoice.igstAmount || 0,
-        totalGST: totalGST,
-        roundOff: roundOff,
-        grandTotal: grandTotal,
-      });
+        buyerState: invoice.buyerState || invoice.buyer?.state || 'N/A',
+        buyerStateCode: invoice.buyerStateCode || invoice.buyer?.stateCode || 'N/A',
+        placeOfSupply: invoice.placeOfSupply || invoice.buyerState || invoice.buyer?.state || 'N/A',
+        taxableValue: subtotal,
+        cgstAmount: cgst,
+        sgstAmount: sgst,
+        igstAmount: igst,
+        totalGST,
+        roundOff,
+        grandTotal,
+        isB2B,
+        rawInvoice: invoice,
+      };
 
-      // Buyer-wise breakdown
-      const buyerKey = invoice.buyer?.gstin || invoice.buyer?.name || 'Unknown';
-      if (!buyerBreakdown[buyerKey]) {
-        buyerBreakdown[buyerKey] = {
-          name: invoice.buyer?.name || 'N/A',
-          gstin: invoice.buyer?.gstin || 'N/A',
-          address: invoice.buyer?.address || 'N/A',
-          state: invoice.buyer?.state || 'N/A',
-          stateCode: invoice.buyer?.stateCode || 'N/A',
-          contact: invoice.buyer?.contact || 'N/A',
+      invoiceBreakdown.push(invRecord);
+      if (isB2B) b2bInvoices.push(invRecord);
+      else b2cInvoices.push(invRecord);
+
+      // Buyer aggregation
+      const buyerKey = buyerGSTIN ? `gstin:${buyerGSTIN.toUpperCase()}` : `name:${buyerName.toLowerCase()}`;
+      if (!buyerMap.has(buyerKey)) {
+        buyerMap.set(buyerKey, {
+          name: buyerName,
+          gstin: buyerGSTIN || 'N/A',
+          state: invoice.buyerState || invoice.buyer?.state || 'N/A',
+          stateCode: invoice.buyerStateCode || invoice.buyer?.stateCode || 'N/A',
           totalInvoices: 0,
           totalSales: 0,
           totalTaxableValue: 0,
@@ -120,53 +135,55 @@ const MonthlyGSTReport = ({ savedInvoices, invoiceData }) => {
           totalSGST: 0,
           totalIGST: 0,
           totalGST: 0,
-        };
+        });
       }
+      const b = buyerMap.get(buyerKey);
+      b.totalInvoices += 1;
+      b.totalSales += grandTotal;
+      b.totalTaxableValue += subtotal;
+      b.totalCGST += cgst;
+      b.totalSGST += sgst;
+      b.totalIGST += igst;
+      b.totalGST += totalGST;
 
-      buyerBreakdown[buyerKey].totalInvoices += 1;
-      buyerBreakdown[buyerKey].totalSales += invoice.grandTotal || 0;
-      buyerBreakdown[buyerKey].totalTaxableValue += invoice.subtotal || 0;
-      buyerBreakdown[buyerKey].totalCGST += invoice.cgstAmount || 0;
-      buyerBreakdown[buyerKey].totalSGST += invoice.sgstAmount || 0;
-      buyerBreakdown[buyerKey].totalIGST += invoice.igstAmount || 0;
-      buyerBreakdown[buyerKey].totalGST += (invoice.cgstAmount || 0) + (invoice.sgstAmount || 0) + (invoice.igstAmount || 0);
+      // HSN aggregation
+      (invoice.items || []).forEach(item => {
+        const code = (item.hsn || item.sac || 'Unclassified').trim();
+        const type = item.hsn ? 'HSN' : item.sac ? 'SAC' : '—';
+        const hsnKey = `${type}:${code}`;
 
-      // Calculate GST breakdown per HSN
-      invoice.items.forEach(item => {
-        const itemTotal = item.quantity * item.rate * (1 - item.discount / 100);
-        const taxableValue = itemTotal;
+        const qty = safeNum(item.quantity);
+        const rate = safeNum(item.rate);
+        const disc = safeNum(item.discount);
+        const unit = (item.unit || 'units').trim().toLowerCase();
+        const lineTaxable = qty * rate * (1 - disc / 100);
 
-        if (!hsnBreakdown[item.hsn]) {
-          hsnBreakdown[item.hsn] = {
-            description: item.description,
-            totalQuantity: 0,
+        if (!hsnMap.has(hsnKey)) {
+          hsnMap.set(hsnKey, {
+            code,
+            type,
+            description: item.description || 'N/A',
+            unitMap: {},
             taxableValue: 0,
             cgst: 0,
             sgst: 0,
             igst: 0,
             totalTax: 0,
-          };
+          });
         }
+        const h = hsnMap.get(hsnKey);
+        h.unitMap[unit] = (h.unitMap[unit] || 0) + qty;
+        h.taxableValue += lineTaxable;
 
-        hsnBreakdown[item.hsn].totalQuantity += item.quantity;
-        hsnBreakdown[item.hsn].taxableValue += taxableValue;
-        totalTaxableValue += taxableValue;
-
-        // Calculate GST based on tax type
-        const gstRate = invoice.taxRate / 100;
-        if (invoice.taxType === 'cgst_sgst') {
-          const cgstAmount = taxableValue * (gstRate / 2);
-          const sgstAmount = taxableValue * (gstRate / 2);
-          hsnBreakdown[item.hsn].cgst += cgstAmount;
-          hsnBreakdown[item.hsn].sgst += sgstAmount;
-          hsnBreakdown[item.hsn].totalTax += cgstAmount + sgstAmount;
-          totalCGST += cgstAmount;
-          totalSGST += sgstAmount;
-        } else {
-          const igstAmount = taxableValue * gstRate;
-          hsnBreakdown[item.hsn].igst += igstAmount;
-          hsnBreakdown[item.hsn].totalTax += igstAmount;
-          totalIGST += igstAmount;
+        if (subtotal > 0) {
+          const ratio = lineTaxable / subtotal;
+          const lineCGST = cgst * ratio;
+          const lineSGST = sgst * ratio;
+          const lineIGST = igst * ratio;
+          h.cgst += lineCGST;
+          h.sgst += lineSGST;
+          h.igst += lineIGST;
+          h.totalTax += (lineCGST + lineSGST + lineIGST);
         }
       });
     });
@@ -179,200 +196,97 @@ const MonthlyGSTReport = ({ savedInvoices, invoiceData }) => {
       totalSGST,
       totalIGST,
       totalGST: totalCGST + totalSGST + totalIGST,
-      hsnBreakdown,
-      buyerBreakdown,
+      b2b: {
+        count: b2bInvoices.length,
+        taxable: b2bInvoices.reduce((s, i) => s + i.taxableValue, 0),
+        cgst: b2bInvoices.reduce((s, i) => s + i.cgstAmount, 0),
+        sgst: b2bInvoices.reduce((s, i) => s + i.sgstAmount, 0),
+        igst: b2bInvoices.reduce((s, i) => s + i.igstAmount, 0),
+        total: b2bInvoices.reduce((s, i) => s + i.totalGST, 0),
+        grandTotal: b2bInvoices.reduce((s, i) => s + i.grandTotal, 0),
+        invoices: b2bInvoices,
+      },
+      b2c: {
+        count: b2cInvoices.length,
+        taxable: b2cInvoices.reduce((s, i) => s + i.taxableValue, 0),
+        cgst: b2cInvoices.reduce((s, i) => s + i.cgstAmount, 0),
+        sgst: b2cInvoices.reduce((s, i) => s + i.sgstAmount, 0),
+        igst: b2cInvoices.reduce((s, i) => s + i.igstAmount, 0),
+        total: b2cInvoices.reduce((s, i) => s + i.totalGST, 0),
+        grandTotal: b2cInvoices.reduce((s, i) => s + i.grandTotal, 0),
+        invoices: b2cInvoices,
+      },
+      hsnBreakdown: [...hsnMap.values()].map(h => ({
+        ...h,
+        unitFormatted: formatUnitQty(h.unitMap),
+      })).sort((a, b) => b.taxableValue - a.taxableValue),
+      buyerBreakdown: [...buyerMap.values()].sort((a, b) => b.totalSales - a.totalSales),
       invoiceBreakdown,
     });
   };
 
-  const handleExportToExcel = () => {
-    if (!monthlyData) return;
-    
-    // Get company details... (same logic as before, simplified for this snippet to reuse existing state)
-     const firstInvoice = savedInvoices.find(invoice => {
-      const invoiceDate = new Date(invoice.date);
-      return invoiceDate.getMonth() + 1 === selectedMonth && invoiceDate.getFullYear() === selectedYear;
-    });
-    const companyDetails = firstInvoice ? firstInvoice.seller : null;
-    
-    // ... (Export logic remains the same structurally, omitted for brevity, but I will assume the previous implementation's logic is kept. 
-    // In a real full file rewrite I would include it all. For this response I will focus on the UI/React part, 
-    // but since I am overwriting the file I MUST provide the full logic. I will paste the export logic back in.)
-    
-    const wb = XLSX.utils.book_new();
-
-    // 1. Summary Sheet
-    const summaryData = [
-       ['GST MONTHLY REPORT'], [`Period: ${months.find(m => m.value === selectedMonth).label} ${selectedYear}`], [],
-       ['SUMMARY METRICS'],
-       ['Total Invoices', monthlyData.totalInvoices],
-       ['Total Sales (₹)', monthlyData.totalSales],
-       ['Total GST (₹)', monthlyData.totalGST]
-    ];
-    const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
-    XLSX.utils.book_append_sheet(wb, wsSummary, 'Summary');
-
-    // 2. Invoice Breakdown
-    const invoiceSheetData = [
-        ['Invoice No', 'Date', 'Customer', 'GSTIN', 'Place of Supply', 'Taxable', 'CGST', 'SGST', 'IGST', 'Total GST', 'Round-Off', 'Grand Total'],
-        ...monthlyData.invoiceBreakdown.map(inv => [
-            inv.invoiceNo, new Date(inv.date).toLocaleDateString(), inv.buyerName, inv.buyerGSTIN, inv.placeOfSupply,
-            inv.taxableValue, inv.cgstAmount, inv.sgstAmount, inv.igstAmount, inv.totalGST, inv.roundOff, inv.grandTotal
-        ])
-    ];
-    const wsInvoices = XLSX.utils.aoa_to_sheet(invoiceSheetData);
-    XLSX.utils.book_append_sheet(wb, wsInvoices, 'Invoices');
-
-    // ... (Adding other sheets simplified for this implementation to ensure code fits)
-    
-    XLSX.writeFile(wb, `GST_Report_${selectedMonth}_${selectedYear}.xlsx`);
-  };
+  const monthLabel = months.find(m => m.value === selectedMonth)?.label || '';
 
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto text-gray-800 bg-white min-h-screen">
-      {/* Header */}
-      <div className="mb-8">
-        <h2 className="text-3xl font-bold text-gray-900 tracking-tight">GST Compliance Center</h2>
-        <p className="text-gray-500 mt-1">Generate monthly tax reports and GSTR-1 summaries.</p>
+    <div className="p-4 md:p-8 max-w-7xl mx-auto text-slate-800 bg-slate-50/50 min-h-screen">
+      {/* Header Banner */}
+      <div className="mb-6">
+        <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight">GSTR-1 Tax Compliance & Filing Center</h2>
+        <p className="text-xs text-slate-500 font-medium mt-1">Audit tax obligations, GSTR-1 tables (B2B, B2C, HSN/SAC), and export professional multi-sheet Excel workbooks.</p>
       </div>
 
-      {/* Controls & Export Card */}
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-8">
-        <div className="flex flex-col md:flex-row gap-6 items-end">
-          
-          <div className="w-full md:w-auto flex-1 grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Month</label>
-              <div className="relative">
-                <select
-                  value={selectedMonth}
-                  onChange={(e) => setSelectedMonth(parseInt(e.target.value))}
-                  className="w-full p-3 bg-white border border-gray-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500 appearance-none font-medium"
-                >
-                  {months.map(month => (
-                    <option key={month.value} value={month.value}>{month.label}</option>
-                  ))}
-                </select>
-                <div className="absolute inset-y-0 right-0 flex items-center px-3 pointer-events-none text-gray-500">
-                  <CalendarIcon />
-                </div>
-              </div>
-            </div>
-            
-            <div>
-              <label className="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Year</label>
-               <div className="relative">
-                <select
-                  value={selectedYear}
-                  onChange={(e) => setSelectedYear(parseInt(e.target.value))}
-                  className="w-full p-3 bg-white border border-gray-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-purple-500 appearance-none font-medium"
-                >
-                  {years.map(year => (
-                    <option key={year} value={year}>{year}</option>
-                  ))}
-                </select>
-              </div>
-            </div>
-          </div>
+      {/* Controls & Exporters */}
+      <GSTReportHeader
+        selectedMonth={selectedMonth}
+        setSelectedMonth={setSelectedMonth}
+        selectedYear={selectedYear}
+        setSelectedYear={setSelectedYear}
+        months={months}
+        years={years}
+        monthlyData={monthlyData}
+      />
 
-          <div className="w-full md:w-auto">
-             <button
-              onClick={handleExportToExcel}
-              disabled={!monthlyData || monthlyData.totalInvoices === 0}
-              className="w-full md:w-auto flex items-center justify-center gap-2 px-8 py-3.5 bg-gradient-to-r from-purple-600 to-blue-600 text-white font-bold rounded-xl hover:from-purple-700 hover:to-blue-700 shadow-lg hover:shadow-purple-200 transition-all disabled:opacity-50 disabled:cursor-not-allowed transform hover:-translate-y-0.5"
-            >
-              <DownloadIcon />
-              Download Excel Report
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Report Content */}
+      {/* Main Content */}
       {!monthlyData || monthlyData.totalInvoices === 0 ? (
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-16 text-center">
-          <div className="w-20 h-20 bg-white rounded-full flex items-center justify-center mx-auto mb-4">
-             <InvoiceIcon />
+        <div className="bg-white rounded-2xl shadow-sm border border-slate-200/80 p-16 text-center">
+          <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center mx-auto mb-3 text-2xl">
+            📑
           </div>
-          <h3 className="text-xl font-bold text-gray-900">No Invoices Found</h3>
-          <p className="text-gray-500 mt-2">There are no GST bills recorded for {months.find(m => m.value === selectedMonth).label} {selectedYear}.</p>
+          <h3 className="text-lg font-bold text-slate-900">No GST Bills Recorded</h3>
+          <p className="text-xs text-slate-500 mt-1">There are no GST invoices recorded for {monthLabel} {selectedYear}.</p>
         </div>
       ) : (
-        <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-          
-          {/* Summary Stats */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
-              <div className="text-sm text-gray-500 mb-1">Total Sales</div>
-              <div className="text-2xl font-bold text-gray-900">₹{monthlyData.totalSales.toLocaleString('en-IN')}</div>
-            </div>
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
-              <div className="text-sm text-gray-500 mb-1">Taxable Value</div>
-              <div className="text-2xl font-bold text-gray-900">₹{monthlyData.totalTaxableValue.toLocaleString('en-IN')}</div>
-            </div>
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
-              <div className="text-sm text-gray-500 mb-1">Total GST</div>
-              <div className="text-2xl font-bold text-purple-600">₹{monthlyData.totalGST.toLocaleString('en-IN')}</div>
-            </div>
-            <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
-              <div className="text-sm text-gray-500 mb-1">Invoices</div>
-              <div className="text-2xl font-bold text-blue-600">{monthlyData.totalInvoices}</div>
-            </div>
+        <div className="space-y-6">
+          {/* Summary KPIs */}
+          <GSTSummaryCards monthlyData={monthlyData} />
+
+          {/* Sub-Tab Navigation */}
+          <div className="flex bg-slate-200/60 p-1 rounded-2xl w-fit flex-wrap gap-1">
+            {[
+              { key: 'summary', label: 'Tax Components' },
+              { key: 'b2b', label: `B2B Registered (${monthlyData.b2b.count})` },
+              { key: 'b2c', label: `B2C Retail (${monthlyData.b2c.count})` },
+              { key: 'hsn', label: `HSN/SAC Summary (${monthlyData.hsnBreakdown.length})` },
+              { key: 'buyers', label: `Buyer Summary (${monthlyData.buyerBreakdown.length})` },
+            ].map(t => (
+              <button
+                key={t.key}
+                onClick={() => setActiveTab(t.key)}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                  activeTab === t.key ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
 
-          {/* Detailed Breakdown */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-             {/* Tax Components */}
-             <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-               <h3 className="font-bold text-gray-800 mb-4">Tax Components</h3>
-               <div className="space-y-4">
-                 <div className="flex justify-between items-center p-3 bg-blue-50 rounded-lg">
-                   <div className="font-medium text-blue-800">CGST</div>
-                   <div className="font-bold text-blue-600">₹{monthlyData.totalCGST.toLocaleString()}</div>
-                 </div>
-                 <div className="flex justify-between items-center p-3 bg-green-50 rounded-lg">
-                   <div className="font-medium text-green-800">SGST</div>
-                   <div className="font-bold text-green-600">₹{monthlyData.totalSGST.toLocaleString()}</div>
-                 </div>
-                 <div className="flex justify-between items-center p-3 bg-purple-50 rounded-lg">
-                   <div className="font-medium text-purple-800">IGST</div>
-                   <div className="font-bold text-purple-600">₹{monthlyData.totalIGST.toLocaleString()}</div>
-                 </div>
-               </div>
-             </div>
-
-             {/* Recent Invoices List */}
-             <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-               <h3 className="font-bold text-gray-800 mb-4">Recent Invoices</h3>
-               <div className="overflow-x-auto">
-                 <table className="w-full text-sm text-left">
-                   <thead className="text-xs text-gray-400 uppercase bg-white">
-                     <tr>
-                       <th className="px-4 py-3 rounded-l-lg">Date</th>
-                       <th className="px-4 py-3">Invoice #</th>
-                       <th className="px-4 py-3">Customer</th>
-                       <th className="px-4 py-3 text-right rounded-r-lg">Total</th>
-                     </tr>
-                   </thead>
-                   <tbody className="divide-y divide-gray-100">
-                     {monthlyData.invoiceBreakdown.slice(0, 5).map((inv, i) => (
-                       <tr key={i} className="hover:bg-white">
-                         <td className="px-4 py-3 text-gray-500">{new Date(inv.date).toLocaleDateString()}</td>
-                         <td className="px-4 py-3 font-mono text-gray-600">{inv.invoiceNo}</td>
-                         <td className="px-4 py-3 font-medium">{inv.buyerName}</td>
-                         <td className="px-4 py-3 text-right font-bold">₹{inv.grandTotal.toLocaleString()}</td>
-                       </tr>
-                     ))}
-                   </tbody>
-                 </table>
-                 {monthlyData.invoiceBreakdown.length > 5 && (
-                   <div className="mt-4 text-center text-xs text-gray-400">
-                     + {monthlyData.invoiceBreakdown.length - 5} more invoices included in export
-                   </div>
-                 )}
-               </div>
-             </div>
-          </div>
+          {/* Active Tab View */}
+          {activeTab === 'summary' && <GSTTaxComponentsTab monthlyData={monthlyData} />}
+          {activeTab === 'b2b' && <GSTB2BTab b2bData={monthlyData.b2b} />}
+          {activeTab === 'b2c' && <GSTB2CTab b2cData={monthlyData.b2c} />}
+          {activeTab === 'hsn' && <GSTHSNTab hsnBreakdown={monthlyData.hsnBreakdown} />}
+          {activeTab === 'buyers' && <GSTBuyerSummaryTab buyerBreakdown={monthlyData.buyerBreakdown} />}
         </div>
       )}
     </div>
