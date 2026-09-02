@@ -208,6 +208,21 @@ function autoFitColumns(ws, headers = []) {
   });
 }
 
+const buildProfessionalFileName = (monthlyData, monthLabel, selectedMonth, selectedYear, ext = 'xlsx') => {
+  const rawCompany = monthlyData?.companyInfo?.name || 'Indian_Make_Steel_Industries';
+  const cleanCompany = rawCompany
+    .toString()
+    .trim()
+    .replace(/[^a-zA-Z0-9]/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+
+  const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const monthStr = monthLabel || (typeof selectedMonth === 'number' ? monthNames[selectedMonth - 1] : selectedMonth);
+
+  return `${cleanCompany}_GSTR1_Report_${monthStr}_${selectedYear}.${ext}`;
+};
+
 export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, selectedYear, monthLabel }) => {
   if (!monthlyData || monthlyData.totalInvoices === 0) {
     alert('No GST records available to export for this period.');
@@ -476,14 +491,14 @@ export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, s
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `GSTR1_Professional_Report_${selectedMonth}_${selectedYear}.xlsx`;
+  a.download = buildProfessionalFileName(monthlyData, monthLabel, selectedMonth, selectedYear, 'xlsx');
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 };
 
-export const exportGSTCSV = ({ monthlyData, selectedMonth, selectedYear }) => {
+export const exportGSTCSV = ({ monthlyData, selectedMonth, selectedYear, monthLabel }) => {
   if (!monthlyData || monthlyData.totalInvoices === 0) return;
   const headers = ['Invoice No', 'Date', 'Type', 'Customer Name', 'GSTIN', 'Place of Supply', 'Taxable Value', 'CGST', 'SGST', 'IGST', 'Total GST', 'Grand Total'];
   const rows = (monthlyData.invoiceBreakdown || []).map((inv) => {
@@ -507,17 +522,25 @@ export const exportGSTCSV = ({ monthlyData, selectedMonth, selectedYear }) => {
   const csvContent = [headers.join(','), ...rows].join('\n');
   const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = `GSTR1_${selectedMonth}_${selectedYear}.csv`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = buildProfessionalFileName(monthlyData, monthLabel, selectedMonth, selectedYear, 'csv');
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 };
 
-export const exportGSTJSON = ({ monthlyData, selectedMonth, selectedYear }) => {
+export const exportGSTJSON = ({ monthlyData, selectedMonth, selectedYear, monthLabel }) => {
   if (!monthlyData || monthlyData.totalInvoices === 0) return;
   const jsonContent = JSON.stringify(monthlyData, null, 2);
   const blob = new Blob([jsonContent], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
-  const a = document.createElement('a'); a.href = url; a.download = `GSTR1_${selectedMonth}_${selectedYear}.json`;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = buildProfessionalFileName(monthlyData, monthLabel, selectedMonth, selectedYear, 'json');
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
   URL.revokeObjectURL(url);
 };
