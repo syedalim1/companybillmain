@@ -4,13 +4,25 @@ import GSTSummaryCards from './gst/GSTSummaryCards';
 import GSTTaxComponentsTab from './gst/GSTTaxComponentsTab';
 import GSTB2BTab from './gst/GSTB2BTab';
 import GSTB2CTab from './gst/GSTB2CTab';
-import GSTHSNTab from './gst/GSTHSNTab';
 import GSTBuyerSummaryTab from './gst/GSTBuyerSummaryTab';
-import { safeNum, safeDate, formatUnitQty } from '@/hooks/useAnalyticsEngine';
+import { safeNum, safeDate } from '@/hooks/useAnalyticsEngine';
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // MAIN SHELL COMPONENT
 // ═══════════════════════════════════════════════════════════════════════════════
+
+const normalizeState = (rawState) => {
+  if (!rawState || rawState === 'N/A') return 'Tamil Nadu';
+  const str = String(rawState).trim();
+  if (/^tamil\s*nadu$/i.test(str)) return 'Tamil Nadu';
+  if (/^karnataka$/i.test(str)) return 'Karnataka';
+  if (/^kerala$/i.test(str)) return 'Kerala';
+  if (/^andhra\s*pradesh$/i.test(str)) return 'Andhra Pradesh';
+  if (/^telangana$/i.test(str)) return 'Telangana';
+  if (/^maharashtra$/i.test(str)) return 'Maharashtra';
+  if (/^delhi$/i.test(str)) return 'Delhi';
+  return str.replace(/\b\w/g, (c) => c.toUpperCase());
+};
 
 const MonthlyGSTReport = ({ savedInvoices = [] }) => {
   const now = new Date();
@@ -68,7 +80,6 @@ const MonthlyGSTReport = ({ savedInvoices = [] }) => {
         totalGST: 0,
         b2b: { count: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, total: 0, grandTotal: 0, invoices: [] },
         b2c: { count: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, total: 0, grandTotal: 0, invoices: [] },
-        hsnBreakdown: [],
         buyerBreakdown: [],
         invoiceBreakdown: [],
       });
@@ -83,7 +94,6 @@ const MonthlyGSTReport = ({ savedInvoices = [] }) => {
 
     const invoiceBreakdown = [];
     const buyerMap = new Map();
-    const hsnMap = new Map();
 
     const b2bInvoices = [];
     const b2cInvoices = [];
@@ -113,7 +123,9 @@ const MonthlyGSTReport = ({ savedInvoices = [] }) => {
 
       const rawDate = invoice.date || invoice.invoiceDetails?.date;
       const invoiceNo = invoice.invoiceNo || invoice.invoiceDetails?.invoiceNo || 'N/A';
-      const placeOfSupply = (invoice.placeOfSupply || invoice.invoiceDetails?.placeOfSupply || invoice.buyerState || invoice.buyer?.state || 'N/A').toString().trim();
+      const rawState = invoice.placeOfSupply || invoice.invoiceDetails?.placeOfSupply || invoice.buyerState || invoice.buyer?.state || 'Tamil Nadu';
+      const placeOfSupply = normalizeState(rawState);
+      const buyerState = normalizeState(invoice.buyerState || invoice.buyer?.state || rawState);
 
       const invRecord = {
         id: invoice.id || invoice._id || Math.random().toString(),
@@ -122,7 +134,7 @@ const MonthlyGSTReport = ({ savedInvoices = [] }) => {
         buyerName,
         buyerGSTIN: buyerGSTIN || 'N/A',
         buyerAddress: (invoice.buyer?.address || invoice.buyerAddress || 'N/A').toString().trim(),
-        buyerState: (invoice.buyerState || invoice.buyer?.state || 'N/A').toString().trim(),
+        buyerState,
         buyerStateCode: (invoice.buyerStateCode || invoice.buyer?.stateCode || 'N/A').toString().trim(),
         placeOfSupply,
         taxableValue: subtotal,
@@ -165,100 +177,59 @@ const MonthlyGSTReport = ({ savedInvoices = [] }) => {
       b.totalSGST += sgst;
       b.totalIGST += igst;
       b.totalGST += totalGST;
+    });
 
-      // HSN aggregation
-      const itemsList = invoice.items || invoice.itemList || [];
-      (Array.isArray(itemsList) ? itemsList : []).forEach(item => {
-        if (!item) return;
-        const rawCode = (item.hsn || item.sac || item.hsnCode || '').toString().trim();
-        const code = rawCode || 'Unclassified';
-        const type = item.hsn || item.hsnCode ? 'HSN' : item.sac ? 'SAC' : '—';
-        const hsnKey = `${type}:${code}`;
+      // Sort invoices chronologically (Date Ascending, then Invoice Number Ascending)
+      const sortInvoicesChronologically = (invList) => {
+        return [...invList].sort((a, b) => {
+          const dA = safeDate(a.date)?.getTime() || 0;
+          const dB = safeDate(b.date)?.getTime() || 0;
+          if (dA !== dB) return dA - dB;
 
-        const qty = safeNum(item.quantity);
-        const rate = safeNum(item.rate || item.unitPrice);
-        const disc = safeNum(item.discount);
-        const unit = (item.unit || 'units').toString().trim().toLowerCase();
-        
-        // Calculate line taxable value cleanly
-        const calculatedTaxable = qty * rate * (1 - disc / 100);
-        const lineTaxable = safeNum(item.amount ?? item.taxableAmount ?? calculatedTaxable);
+          const numA = Number(String(a.invoiceNo || '').replace(/\D/g, ''));
+          const numB = Number(String(b.invoiceNo || '').replace(/\D/g, ''));
+          if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+            return numA - numB;
+          }
+          return String(a.invoiceNo || '').localeCompare(String(b.invoiceNo || ''));
+        });
+      };
 
-        if (!hsnMap.has(hsnKey)) {
-          hsnMap.set(hsnKey, {
-            code,
-            type,
-            description: (item.description || item.name || 'N/A').toString().trim(),
-            unitMap: {},
-            taxableValue: 0,
-            cgst: 0,
-            sgst: 0,
-            igst: 0,
-            totalTax: 0,
-          });
-        }
-        const h = hsnMap.get(hsnKey);
-        if (h.description === 'N/A' && (item.description || item.name)) {
-          h.description = (item.description || item.name).toString().trim();
-        }
+      const sortedB2B = sortInvoicesChronologically(b2bInvoices);
+      const sortedB2C = sortInvoicesChronologically(b2cInvoices);
+      const sortedAll = sortInvoicesChronologically(invoiceBreakdown);
 
-        h.unitMap[unit] = (h.unitMap[unit] || 0) + qty;
-        h.taxableValue += lineTaxable;
-
-        // Extract or proportionally compute item GST breakdown
-        let lineCGST = safeNum(item.cgstAmount);
-        let lineSGST = safeNum(item.sgstAmount);
-        let lineIGST = safeNum(item.igstAmount);
-
-        if (!lineCGST && !lineSGST && !lineIGST && subtotal > 0) {
-          const ratio = lineTaxable / subtotal;
-          lineCGST = cgst * ratio;
-          lineSGST = sgst * ratio;
-          lineIGST = igst * ratio;
-        }
-
-        h.cgst += lineCGST;
-        h.sgst += lineSGST;
-        h.igst += lineIGST;
-        h.totalTax += (lineCGST + lineSGST + lineIGST);
+      setMonthlyData({
+        totalInvoices: gstInvoices.length,
+        totalSales,
+        totalTaxableValue,
+        totalCGST,
+        totalSGST,
+        totalIGST,
+        totalGST: totalCGST + totalSGST + totalIGST,
+        b2b: {
+          count: sortedB2B.length,
+          taxable: sortedB2B.reduce((s, i) => s + i.taxableValue, 0),
+          cgst: sortedB2B.reduce((s, i) => s + i.cgstAmount, 0),
+          sgst: sortedB2B.reduce((s, i) => s + i.sgstAmount, 0),
+          igst: sortedB2B.reduce((s, i) => s + i.igstAmount, 0),
+          total: sortedB2B.reduce((s, i) => s + i.totalGST, 0),
+          grandTotal: sortedB2B.reduce((s, i) => s + i.grandTotal, 0),
+          invoices: sortedB2B,
+        },
+        b2c: {
+          count: sortedB2C.length,
+          taxable: sortedB2C.reduce((s, i) => s + i.taxableValue, 0),
+          cgst: sortedB2C.reduce((s, i) => s + i.cgstAmount, 0),
+          sgst: sortedB2C.reduce((s, i) => s + i.sgstAmount, 0),
+          igst: sortedB2C.reduce((s, i) => s + i.igstAmount, 0),
+          total: sortedB2C.reduce((s, i) => s + i.totalGST, 0),
+          grandTotal: sortedB2C.reduce((s, i) => s + i.grandTotal, 0),
+          invoices: sortedB2C,
+        },
+        buyerBreakdown: [...buyerMap.values()].sort((a, b) => b.totalSales - a.totalSales),
+        invoiceBreakdown: sortedAll,
       });
-    });
-
-    setMonthlyData({
-      totalInvoices: gstInvoices.length,
-      totalSales,
-      totalTaxableValue,
-      totalCGST,
-      totalSGST,
-      totalIGST,
-      totalGST: totalCGST + totalSGST + totalIGST,
-      b2b: {
-        count: b2bInvoices.length,
-        taxable: b2bInvoices.reduce((s, i) => s + i.taxableValue, 0),
-        cgst: b2bInvoices.reduce((s, i) => s + i.cgstAmount, 0),
-        sgst: b2bInvoices.reduce((s, i) => s + i.sgstAmount, 0),
-        igst: b2bInvoices.reduce((s, i) => s + i.igstAmount, 0),
-        total: b2bInvoices.reduce((s, i) => s + i.totalGST, 0),
-        grandTotal: b2bInvoices.reduce((s, i) => s + i.grandTotal, 0),
-        invoices: b2bInvoices,
-      },
-      b2c: {
-        count: b2cInvoices.length,
-        taxable: b2cInvoices.reduce((s, i) => s + i.taxableValue, 0),
-        cgst: b2cInvoices.reduce((s, i) => s + i.cgstAmount, 0),
-        sgst: b2cInvoices.reduce((s, i) => s + i.sgstAmount, 0),
-        igst: b2cInvoices.reduce((s, i) => s + i.igstAmount, 0),
-        total: b2cInvoices.reduce((s, i) => s + i.totalGST, 0),
-        grandTotal: b2cInvoices.reduce((s, i) => s + i.grandTotal, 0),
-        invoices: b2cInvoices,
-      },
-      hsnBreakdown: [...hsnMap.values()].map(h => ({
-        ...h,
-        unitFormatted: formatUnitQty(h.unitMap),
-      })).sort((a, b) => b.taxableValue - a.taxableValue),
-      buyerBreakdown: [...buyerMap.values()].sort((a, b) => b.totalSales - a.totalSales),
-      invoiceBreakdown,
-    });
   };
 
   const monthLabel = months.find(m => m.value === selectedMonth)?.label || '';
@@ -268,7 +239,7 @@ const MonthlyGSTReport = ({ savedInvoices = [] }) => {
       {/* Header Banner */}
       <div className="mb-6">
         <h2 className="text-2xl md:text-3xl font-extrabold text-slate-900 tracking-tight">GSTR-1 Tax Compliance & Filing Center</h2>
-        <p className="text-xs text-slate-500 font-medium mt-1">Audit tax obligations, GSTR-1 tables (B2B, B2C, HSN/SAC), and export professional multi-sheet Excel workbooks.</p>
+        <p className="text-xs text-slate-500 font-medium mt-1">Audit tax obligations, GSTR-1 tables (B2B, B2C), and export professional multi-sheet Excel workbooks.</p>
       </div>
 
       {/* Controls & Exporters */}
@@ -302,7 +273,6 @@ const MonthlyGSTReport = ({ savedInvoices = [] }) => {
               { key: 'summary', label: 'Tax Components' },
               { key: 'b2b', label: `B2B Registered (${monthlyData.b2b.count})` },
               { key: 'b2c', label: `B2C Retail (${monthlyData.b2c.count})` },
-              { key: 'hsn', label: `HSN/SAC Summary (${monthlyData.hsnBreakdown.length})` },
               { key: 'buyers', label: `Buyer Summary (${monthlyData.buyerBreakdown.length})` },
             ].map(t => (
               <button
@@ -321,7 +291,6 @@ const MonthlyGSTReport = ({ savedInvoices = [] }) => {
           {activeTab === 'summary' && <GSTTaxComponentsTab monthlyData={monthlyData} />}
           {activeTab === 'b2b' && <GSTB2BTab b2bData={monthlyData.b2b} />}
           {activeTab === 'b2c' && <GSTB2CTab b2cData={monthlyData.b2c} />}
-          {activeTab === 'hsn' && <GSTHSNTab hsnBreakdown={monthlyData.hsnBreakdown} />}
           {activeTab === 'buyers' && <GSTBuyerSummaryTab buyerBreakdown={monthlyData.buyerBreakdown} />}
         </div>
       )}

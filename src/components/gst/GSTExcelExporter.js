@@ -1,12 +1,6 @@
 import ExcelJS from 'exceljs';
 import { safeDate, safeNum } from '@/hooks/useAnalyticsEngine';
 
-// NOTE: switched from 'xlsx' (SheetJS community) to 'exceljs'.
-// Reason: plain 'xlsx' silently drops colors/fonts/borders on write —
-// that's why your old file always looked plain no matter what you set.
-// exceljs actually renders fills, fonts, borders, freeze panes, autofilter.
-// npm i exceljs
-
 const BRAND = {
   headerFill: 'FF1F4E78',   // dark blue
   headerFont: 'FFFFFFFF',   // white
@@ -26,6 +20,29 @@ const money = (v) => {
   return isNaN(parsed) ? 0 : parsed;
 };
 
+const formatInvoiceNo = (val) => {
+  if (val === null || val === undefined || val === '') return 'N/A';
+  const str = String(val).trim();
+  const num = Number(str);
+  if (!isNaN(num) && Number.isInteger(num)) {
+    return num;
+  }
+  return str;
+};
+
+const normalizeStateName = (str) => {
+  if (!str || str === 'N/A') return 'Tamil Nadu';
+  const clean = str.toString().trim();
+  if (/^tamil\s*nadu$/i.test(clean)) return 'Tamil Nadu';
+  if (/^karnataka$/i.test(clean)) return 'Karnataka';
+  if (/^kerala$/i.test(clean)) return 'Kerala';
+  if (/^andhra\s*pradesh$/i.test(clean)) return 'Andhra Pradesh';
+  if (/^telangana$/i.test(clean)) return 'Telangana';
+  if (/^maharashtra$/i.test(clean)) return 'Maharashtra';
+  if (/^delhi$/i.test(clean)) return 'Delhi';
+  return clean.replace(/\b\w/g, (c) => c.toUpperCase());
+};
+
 const thinBorder = {
   top: { style: 'thin', color: { argb: BRAND.border } },
   left: { style: 'thin', color: { argb: BRAND.border } },
@@ -41,7 +58,7 @@ function addBanner(ws, title, subtitleLines = [], colSpan = 8) {
   titleCell.font = { bold: true, size: 14, color: { argb: BRAND.headerFont } };
   titleCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.headerFill } };
   titleCell.alignment = { horizontal: 'center', vertical: 'middle' };
-  ws.getRow(1).height = 26;
+  ws.getRow(1).height = 28;
 
   subtitleLines.forEach((line, i) => {
     const rowIdx = i + 2;
@@ -65,7 +82,7 @@ function styleHeaderRow(ws, rowNum, colCount) {
     cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: true };
     cell.border = thinBorder;
   }
-  row.height = 20;
+  row.height = 22;
 }
 
 /** Styles a totals row */
@@ -77,6 +94,7 @@ function styleTotalRow(ws, rowNum, colCount) {
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.totalFill } };
     cell.border = thinBorder;
   }
+  row.height = 20;
 }
 
 /** Zebra-stripes data rows + borders + currency format on given money columns */
@@ -96,8 +114,43 @@ function styleDataRows(ws, startRow, endRow, colCount, moneyCols = []) {
   }
 }
 
-function autoFitColumns(ws, headers) {
-  ws.columns = headers.map((h) => ({ width: Math.min(Math.max(String(h || '').length + 4, 12), 40) }));
+/** Dynamic Auto-fit columns based on maximum content length in each column */
+function autoFitColumns(ws, headers = []) {
+  ws.columns.forEach((column, colIdx) => {
+    let maxContentLen = 0;
+
+    column.eachCell({ includeEmpty: false }, (cell) => {
+      if (cell.row <= 2) return; // Skip main title banners
+      if (cell.isMerged && cell.address !== cell.master.address) return;
+
+      let str = '';
+      if (cell.value !== null && cell.value !== undefined) {
+        if (typeof cell.value === 'object' && cell.value.result !== undefined) {
+          str = String(cell.value.result);
+        } else {
+          str = String(cell.value);
+        }
+      }
+
+      if (typeof cell.value === 'number' && cell.numFmt) {
+        if (cell.numFmt.includes('₹')) {
+          str = `₹ ${cell.value.toLocaleString('en-IN', { minimumFractionDigits: 2 })}`;
+        } else {
+          str = cell.value.toLocaleString('en-IN');
+        }
+      }
+
+      if (str.length > maxContentLen) {
+        maxContentLen = str.length;
+      }
+    });
+
+    const headerText = headers[colIdx] ? String(headers[colIdx]) : '';
+    const finalLen = Math.max(maxContentLen, headerText.length);
+
+    // Padding +6 chars for filter dropdown arrows & clean padding
+    column.width = Math.min(Math.max(finalLen + 6, 12), 55);
+  });
 }
 
 export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, selectedYear, monthLabel }) => {
@@ -132,23 +185,31 @@ export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, s
   r += 1;
 
   const kpiHeaderRow = r;
-  wsSummary.getRow(r).values = ['Metric Description', 'Count / Amount (₹)'];
+  wsSummary.getRow(r).values = ['Metric Description', 'Count / Amount'];
   styleHeaderRow(wsSummary, r, 2);
   r += 1;
 
-  const kpis = [
+  const kpiCurrencyRows = [
     ['Total Gross Sales Billed (Grand Total)', money(monthlyData.totalSales)],
     ['Net Taxable Turnover (Subtotal)', money(monthlyData.totalTaxableValue)],
     ['Total CGST Tax Duty', money(monthlyData.totalCGST)],
     ['Total SGST Tax Duty', money(monthlyData.totalSGST)],
     ['Total IGST Tax Duty', money(monthlyData.totalIGST)],
     ['Total GST Duty Payable', money(monthlyData.totalGST)],
-    ['Total Tax Invoices Issued', money(monthlyData.totalInvoices)],
   ];
   const kpiStart = r;
-  kpis.forEach((row) => { wsSummary.getRow(r).values = row; r += 1; });
+  kpiCurrencyRows.forEach((row) => { wsSummary.getRow(r).values = row; r += 1; });
   styleDataRows(wsSummary, kpiStart, r - 1, 2, [2]);
-  r += 1;
+
+  // Invoice Count row (formatted as integer without Rupee sign)
+  const countRow = r;
+  wsSummary.getRow(r).values = ['Total Tax Invoices Issued', Number(monthlyData.totalInvoices)];
+  wsSummary.getCell(r, 1).border = thinBorder;
+  wsSummary.getCell(r, 2).border = thinBorder;
+  wsSummary.getCell(r, 2).numFmt = '#,##0';
+  wsSummary.getCell(r, 2).alignment = { horizontal: 'right' };
+  wsSummary.getCell(r, 2).font = { bold: true };
+  r += 2;
 
   // B2B vs B2C classification
   wsSummary.getCell(r, 1).value = '2. GSTR-1 COMPLIANCE CLASSIFICATION (B2B vs B2C)';
@@ -163,36 +224,36 @@ export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, s
   r += 1;
   const classStart = r;
   wsSummary.getRow(r).values = ['B2B (Registered Buyers with GSTIN)', money(monthlyData.b2b?.count), money(monthlyData.b2b?.taxable), money(monthlyData.b2b?.cgst), money(monthlyData.b2b?.sgst), money(monthlyData.b2b?.igst), money(monthlyData.b2b?.total), money(monthlyData.b2b?.grandTotal)];
+  wsSummary.getCell(r, 2).numFmt = '#,##0';
   r += 1;
   wsSummary.getRow(r).values = ['B2C (Retail / Unregistered Buyers)', money(monthlyData.b2c?.count), money(monthlyData.b2c?.taxable), money(monthlyData.b2c?.cgst), money(monthlyData.b2c?.sgst), money(monthlyData.b2c?.igst), money(monthlyData.b2c?.total), money(monthlyData.b2c?.grandTotal)];
+  wsSummary.getCell(r, 2).numFmt = '#,##0';
   styleDataRows(wsSummary, classStart, r, 8, [3, 4, 5, 6, 7, 8]);
   r += 1;
   wsSummary.getRow(r).values = ['TOTAL TAX COMPLIANCE OBLIGATION', money(monthlyData.totalInvoices), money(monthlyData.totalTaxableValue), money(monthlyData.totalCGST), money(monthlyData.totalSGST), money(monthlyData.totalIGST), money(monthlyData.totalGST), money(monthlyData.totalSales)];
   styleTotalRow(wsSummary, r, 8);
+  wsSummary.getCell(r, 2).numFmt = '#,##0';
   [3, 4, 5, 6, 7, 8].forEach((c) => { wsSummary.getRow(r).getCell(c).numFmt = '₹ #,##0.00'; });
   r += 2;
 
-  // HSN highlights
-  wsSummary.getCell(r, 1).value = '3. HSN / SAC CLASSIFICATION HIGHLIGHTS (Top 10)';
-  wsSummary.mergeCells(r, 1, r, 6);
-  wsSummary.getCell(r, 1).font = { bold: true, size: 12, color: { argb: BRAND.headerFont } };
-  wsSummary.getCell(r, 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BRAND.headerFill } };
-  r += 1;
-  const hsnHiHeaders = ['HSN/SAC Code', 'Type', 'Description', 'Volume', 'Taxable Turnover (₹)', 'Total Tax (₹)'];
-  wsSummary.getRow(r).values = hsnHiHeaders;
-  styleHeaderRow(wsSummary, r, 6);
-  r += 1;
-  const hsnHiStart = r;
-  (monthlyData.hsnBreakdown || []).slice(0, 10).forEach((h) => {
-    wsSummary.getRow(r).values = [h.code, h.type, h.description, h.unitFormatted, money(h.taxableValue), money(h.totalTax)];
-    r += 1;
-  });
-  if ((monthlyData.hsnBreakdown || []).length > 0) {
-    styleDataRows(wsSummary, hsnHiStart, r - 1, 6, [5, 6]);
-  }
-
   autoFitColumns(wsSummary, classHeaders);
   wsSummary.views = [{ state: 'frozen', ySplit: kpiHeaderRow }];
+
+  // Sort invoices chronologically (Date Ascending, then Invoice Number Ascending)
+  const sortInvoices = (list = []) => {
+    return [...list].sort((a, b) => {
+      const dA = safeDate(a.date)?.getTime() || 0;
+      const dB = safeDate(b.date)?.getTime() || 0;
+      if (dA !== dB) return dA - dB;
+
+      const numA = Number(String(a.invoiceNo || '').replace(/\D/g, ''));
+      const numB = Number(String(b.invoiceNo || '').replace(/\D/g, ''));
+      if (!isNaN(numA) && !isNaN(numB) && numA !== numB) {
+        return numA - numB;
+      }
+      return String(a.invoiceNo || '').localeCompare(String(b.invoiceNo || ''));
+    });
+  };
 
   // ═══════════════════════════ SHEET 2: GSTR-1 B2B ═══════════════════════════
   const wsB2B = wb.addWorksheet('GSTR-1 B2B');
@@ -203,17 +264,34 @@ export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, s
   const b2bHeaderRow = rb;
   rb += 1;
   const b2bDataStart = rb;
-  (monthlyData.b2b?.invoices || []).forEach((inv, i) => {
+
+  const b2bSorted = sortInvoices(monthlyData.b2b?.invoices || []);
+  b2bSorted.forEach((inv, i) => {
     const d = safeDate(inv.date);
-    wsB2B.getRow(rb).values = [i + 1, inv.invoiceNo || 'N/A', d ? d.toLocaleDateString('en-IN') : (inv.date || ''), inv.buyerGSTIN || 'N/A', inv.buyerName || 'N/A', inv.placeOfSupply || 'N/A', money(inv.taxableValue), money(inv.cgstAmount), money(inv.sgstAmount), money(inv.igstAmount), money(inv.totalGST), money(inv.grandTotal)];
+    const invNo = formatInvoiceNo(inv.invoiceNo);
+    const pos = normalizeStateName(inv.placeOfSupply);
+    wsB2B.getRow(rb).values = [i + 1, invNo, d ? d.toLocaleDateString('en-IN') : (inv.date || ''), inv.buyerGSTIN || 'N/A', inv.buyerName || 'N/A', pos, money(inv.taxableValue), money(inv.cgstAmount), money(inv.sgstAmount), money(inv.igstAmount), money(inv.totalGST), money(inv.grandTotal)];
     rb += 1;
   });
-  if ((monthlyData.b2b?.invoices || []).length > 0) {
+  if (b2bSorted.length > 0) {
     styleDataRows(wsB2B, b2bDataStart, rb - 1, 12, [7, 8, 9, 10, 11, 12]);
   }
-  wsB2B.getRow(rb).values = ['TOTAL B2B DUTY', '', '', '', '', '', money(monthlyData.b2b?.taxable), money(monthlyData.b2b?.cgst), money(monthlyData.b2b?.sgst), money(monthlyData.b2b?.igst), money(monthlyData.b2b?.total), money(monthlyData.b2b?.grandTotal)];
+  
+  // Total Row with merged label cell (Columns 1-6)
+  wsB2B.mergeCells(rb, 1, rb, 6);
+  const totalB2BCell = wsB2B.getCell(rb, 1);
+  totalB2BCell.value = 'TOTAL B2B DUTY OBLIGATION';
+  totalB2BCell.alignment = { horizontal: 'right', vertical: 'middle' };
+  
+  const b2bTotalValues = [
+    money(monthlyData.b2b?.taxable), money(monthlyData.b2b?.cgst), money(monthlyData.b2b?.sgst), money(monthlyData.b2b?.igst), money(monthlyData.b2b?.total), money(monthlyData.b2b?.grandTotal)
+  ];
+  b2bTotalValues.forEach((val, idx) => {
+    wsB2B.getCell(rb, 7 + idx).value = val;
+  });
   styleTotalRow(wsB2B, rb, 12);
   [7, 8, 9, 10, 11, 12].forEach((c) => { wsB2B.getRow(rb).getCell(c).numFmt = '₹ #,##0.00'; });
+
   autoFitColumns(wsB2B, b2bHeaders);
   wsB2B.autoFilter = { from: { row: b2bHeaderRow, column: 1 }, to: { row: b2bHeaderRow, column: 12 } };
   wsB2B.views = [{ state: 'frozen', ySplit: b2bHeaderRow }];
@@ -227,53 +305,39 @@ export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, s
   const b2cHeaderRow = rc;
   rc += 1;
   const b2cDataStart = rc;
-  (monthlyData.b2c?.invoices || []).forEach((inv, i) => {
+
+  const b2cSorted = sortInvoices(monthlyData.b2c?.invoices || []);
+  b2cSorted.forEach((inv, i) => {
     const d = safeDate(inv.date);
-    wsB2C.getRow(rc).values = [i + 1, inv.invoiceNo || 'N/A', d ? d.toLocaleDateString('en-IN') : (inv.date || ''), inv.buyerName || 'N/A', inv.placeOfSupply || 'N/A', money(inv.taxableValue), money(inv.cgstAmount), money(inv.sgstAmount), money(inv.igstAmount), money(inv.totalGST), money(inv.grandTotal)];
+    const invNo = formatInvoiceNo(inv.invoiceNo);
+    const pos = normalizeStateName(inv.placeOfSupply);
+    wsB2C.getRow(rc).values = [i + 1, invNo, d ? d.toLocaleDateString('en-IN') : (inv.date || ''), inv.buyerName || 'N/A', pos, money(inv.taxableValue), money(inv.cgstAmount), money(inv.sgstAmount), money(inv.igstAmount), money(inv.totalGST), money(inv.grandTotal)];
     rc += 1;
   });
-  if ((monthlyData.b2c?.invoices || []).length > 0) {
+  if (b2cSorted.length > 0) {
     styleDataRows(wsB2C, b2cDataStart, rc - 1, 11, [6, 7, 8, 9, 10, 11]);
   }
-  wsB2C.getRow(rc).values = ['TOTAL B2C DUTY', '', '', '', '', money(monthlyData.b2c?.taxable), money(monthlyData.b2c?.cgst), money(monthlyData.b2c?.sgst), money(monthlyData.b2c?.igst), money(monthlyData.b2c?.total), money(monthlyData.b2c?.grandTotal)];
+
+  // Total Row with merged label cell (Columns 1-5)
+  wsB2C.mergeCells(rc, 1, rc, 5);
+  const totalB2CCell = wsB2C.getCell(rc, 1);
+  totalB2CCell.value = 'TOTAL B2C DUTY OBLIGATION';
+  totalB2CCell.alignment = { horizontal: 'right', vertical: 'middle' };
+
+  const b2cTotalValues = [
+    money(monthlyData.b2c?.taxable), money(monthlyData.b2c?.cgst), money(monthlyData.b2c?.sgst), money(monthlyData.b2c?.igst), money(monthlyData.b2c?.total), money(monthlyData.b2c?.grandTotal)
+  ];
+  b2cTotalValues.forEach((val, idx) => {
+    wsB2C.getCell(rc, 6 + idx).value = val;
+  });
   styleTotalRow(wsB2C, rc, 11);
   [6, 7, 8, 9, 10, 11].forEach((c) => { wsB2C.getRow(rc).getCell(c).numFmt = '₹ #,##0.00'; });
+
   autoFitColumns(wsB2C, b2cHeaders);
   wsB2C.autoFilter = { from: { row: b2cHeaderRow, column: 1 }, to: { row: b2cHeaderRow, column: 11 } };
   wsB2C.views = [{ state: 'frozen', ySplit: b2cHeaderRow }];
 
-  // ═══════════════════════════ SHEET 4: HSN / SAC SUMMARY ═══════════════════════════
-  const wsHSN = wb.addWorksheet('HSN SAC Summary');
-  let rh = addBanner(wsHSN, 'GSTR-1 TABLE 12: HSN / SAC SUMMARY & QUANTITY AGGREGATION', [`Period: ${periodTitle}  |  Total Unique HSN Codes: ${(monthlyData.hsnBreakdown || []).length}`], 10);
-  const hsnHeaders = ['S.No', 'HSN/SAC Code', 'Type', 'Description', 'Total Quantity', 'Taxable Value (₹)', 'CGST (₹)', 'SGST (₹)', 'IGST (₹)', 'Total Tax (₹)'];
-  wsHSN.getRow(rh).values = hsnHeaders;
-  styleHeaderRow(wsHSN, rh, 10);
-  const hsnHeaderRow = rh;
-  rh += 1;
-  const hsnDataStart = rh;
-  (monthlyData.hsnBreakdown || []).forEach((h, i) => {
-    wsHSN.getRow(rh).values = [i + 1, h.code || 'Unclassified', h.type || '—', h.description || 'N/A', h.unitFormatted || '0 units', money(h.taxableValue), money(h.cgst), money(h.sgst), money(h.igst), money(h.totalTax)];
-    rh += 1;
-  });
-  if ((monthlyData.hsnBreakdown || []).length > 0) {
-    styleDataRows(wsHSN, hsnDataStart, rh - 1, 10, [6, 7, 8, 9, 10]);
-  }
-  const hsnTotals = (monthlyData.hsnBreakdown || []).reduce((acc, h) => ({
-    taxable: acc.taxable + money(h.taxableValue),
-    cgst: acc.cgst + money(h.cgst),
-    sgst: acc.sgst + money(h.sgst),
-    igst: acc.igst + money(h.igst),
-    totalTax: acc.totalTax + money(h.totalTax),
-  }), { taxable: 0, cgst: 0, sgst: 0, igst: 0, totalTax: 0 });
-
-  wsHSN.getRow(rh).values = ['TOTAL HSN ALLOCATION', '', '', '', '', money(hsnTotals.taxable), money(hsnTotals.cgst), money(hsnTotals.sgst), money(hsnTotals.igst), money(hsnTotals.totalTax)];
-  styleTotalRow(wsHSN, rh, 10);
-  [6, 7, 8, 9, 10].forEach((c) => { wsHSN.getRow(rh).getCell(c).numFmt = '₹ #,##0.00'; });
-  autoFitColumns(wsHSN, hsnHeaders);
-  wsHSN.autoFilter = { from: { row: hsnHeaderRow, column: 1 }, to: { row: hsnHeaderRow, column: 10 } };
-  wsHSN.views = [{ state: 'frozen', ySplit: hsnHeaderRow }];
-
-  // ═══════════════════════════ SHEET 5: BUYER SUMMARY ═══════════════════════════
+  // ═══════════════════════════ SHEET 4: BUYER SUMMARY ═══════════════════════════
   const wsBuyers = wb.addWorksheet('Buyer Summary');
   let ru = addBanner(wsBuyers, 'CUSTOMER-WISE AGGREGATED GST BREAKDOWN', [`Period: ${periodTitle}  |  Total Unique Clients: ${(monthlyData.buyerBreakdown || []).length}`], 11);
   const buyerHeaders = ['S.No', 'Customer Name', 'GSTIN', 'State', 'Invoices Issued', 'Taxable Value (₹)', 'CGST (₹)', 'SGST (₹)', 'IGST (₹)', 'Total Tax (₹)', 'Grand Billed Total (₹)'];
@@ -283,7 +347,9 @@ export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, s
   ru += 1;
   const buyerDataStart = ru;
   (monthlyData.buyerBreakdown || []).forEach((b, i) => {
-    wsBuyers.getRow(ru).values = [i + 1, b.name || 'N/A', b.gstin || 'N/A', b.state || 'N/A', money(b.totalInvoices), money(b.totalTaxableValue), money(b.totalCGST), money(b.totalSGST), money(b.totalIGST), money(b.totalGST), money(b.totalSales)];
+    const st = normalizeStateName(b.state);
+    wsBuyers.getRow(ru).values = [i + 1, b.name || 'N/A', b.gstin || 'N/A', st, Number(b.totalInvoices || 0), money(b.totalTaxableValue), money(b.totalCGST), money(b.totalSGST), money(b.totalIGST), money(b.totalGST), money(b.totalSales)];
+    wsBuyers.getCell(ru, 5).numFmt = '#,##0';
     ru += 1;
   });
   if ((monthlyData.buyerBreakdown || []).length > 0) {
@@ -293,10 +359,10 @@ export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, s
   wsBuyers.autoFilter = { from: { row: buyerHeaderRow, column: 1 }, to: { row: buyerHeaderRow, column: 11 } };
   wsBuyers.views = [{ state: 'frozen', ySplit: buyerHeaderRow }];
 
-  // ═══════════════════════════ SHEET 6: STATE-WISE TAX ═══════════════════════════
+  // ═══════════════════════════ SHEET 5: STATE-WISE TAX ═══════════════════════════
   const stateMap = new Map();
   (monthlyData.invoiceBreakdown || []).forEach((inv) => {
-    const st = (inv.placeOfSupply || 'Unknown State').toString().trim();
+    const st = normalizeStateName(inv.placeOfSupply);
     if (!stateMap.has(st)) stateMap.set(st, { state: st, count: 0, taxable: 0, cgst: 0, sgst: 0, igst: 0, totalGST: 0, grandTotal: 0 });
     const s = stateMap.get(st);
     s.count++;
@@ -318,7 +384,8 @@ export const exportProfessionalGSTExcel = async ({ monthlyData, selectedMonth, s
   rs += 1;
   const stateDataStart = rs;
   stateRows.forEach((s, i) => {
-    wsState.getRow(rs).values = [i + 1, s.state, s.count, money(s.taxable), money(s.cgst), money(s.sgst), money(s.igst), money(s.totalGST), money(s.grandTotal)];
+    wsState.getRow(rs).values = [i + 1, s.state, Number(s.count || 0), money(s.taxable), money(s.cgst), money(s.sgst), money(s.igst), money(s.totalGST), money(s.grandTotal)];
+    wsState.getCell(rs, 3).numFmt = '#,##0';
     rs += 1;
   });
   if (stateRows.length > 0) {
@@ -353,7 +420,7 @@ export const exportGSTCSV = ({ monthlyData, selectedMonth, selectedYear }) => {
       `"${inv.isB2B ? 'B2B' : 'B2C'}"`,
       `"${(inv.buyerName || '').toString().replace(/"/g, '""')}"`,
       `"${(inv.buyerGSTIN || '').toString().replace(/"/g, '""')}"`,
-      `"${(inv.placeOfSupply || '').toString().replace(/"/g, '""')}"`,
+      `"${normalizeStateName(inv.placeOfSupply).replace(/"/g, '""')}"`,
       money(inv.taxableValue).toFixed(2),
       money(inv.cgstAmount).toFixed(2),
       money(inv.sgstAmount).toFixed(2),
