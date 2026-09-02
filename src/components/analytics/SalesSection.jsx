@@ -1,7 +1,7 @@
 import React from 'react';
 import { formatINR } from '@/hooks/useAnalyticsEngine';
 
-const SalesSection = ({ analytics }) => {
+const SalesSection = ({ analytics, onFilterChange }) => {
   if (!analytics) return null;
   const { monthlyTrends, quarterlyData, stateData, summary } = analytics;
   const maxRev = Math.max(...monthlyTrends.map(m => m.revenue), 1);
@@ -13,7 +13,7 @@ const SalesSection = ({ analytics }) => {
 
   return (
     <div className="space-y-6">
-      {/* Summary row */}
+      {/* Summary Row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: 'Total Billed', value: formatINR(summary.totalRevenue), sub: `${summary.invoiceCount} invoices` },
@@ -29,65 +29,85 @@ const SalesSection = ({ analytics }) => {
         ))}
       </div>
 
-      {/* Monthly Revenue Chart (full) */}
+      {/* Monthly Revenue Chart with 3-Month Moving Average */}
       <div className="bg-bg-surface rounded-2xl border border-slate-100 shadow-sm p-5">
-        <div className="flex items-center justify-between mb-5">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between mb-5 gap-2">
           <div>
-            <h4 className="text-base font-bold text-text-title">Monthly Revenue</h4>
-            <p className="text-xs text-text-desc mt-0.5">Last 12 months performance</p>
+            <h4 className="text-base font-bold text-text-title">Monthly Revenue Flow</h4>
+            <p className="text-xs text-text-desc mt-0.5">Includes 3-Month Moving Average overlay • Click a bar to filter</p>
           </div>
-          <div className="text-right">
-            <p className="text-lg font-extrabold text-text-title">{formatINR(avgMonthly)}</p>
-            <p className="text-[10px] text-text-desc font-bold uppercase tracking-wider">Avg Monthly</p>
+          <div className="flex items-center gap-4 text-[10px]">
+            <div className="flex items-center gap-1.5"><div className="w-3 h-3 rounded bg-indigo-600" /><span className="text-text-desc font-semibold">Monthly Sales</span></div>
+            <div className="flex items-center gap-1.5"><div className="w-3 h-0.5 bg-amber-500" /><span className="text-text-desc font-semibold">3-Month Moving Avg</span></div>
           </div>
         </div>
-        <div className="flex items-end gap-1.5 h-52">
+
+        <div className="flex items-end gap-1.5 h-56 relative">
           {monthlyTrends.map((m, i) => (
-            <div key={i} className="flex-1 flex flex-col items-center group relative h-full justify-end">
+            <div
+              key={i}
+              onClick={() => onFilterChange && onFilterChange('month', m.monthIndex + 1)}
+              className="flex-1 flex flex-col items-center group relative h-full justify-end cursor-pointer"
+            >
               {/* Tooltip */}
-              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 opacity-0 group-hover:opacity-100 transition-opacity z-10 pointer-events-none">
+              <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 opacity-0 group-hover:opacity-100 transition-opacity z-20 pointer-events-none">
                 <div className="bg-gray-900 text-white text-[10px] rounded-lg py-2 px-3 whitespace-nowrap shadow-xl text-center">
                   <div className="text-gray-400 text-[9px] uppercase">{m.fullMonth}</div>
                   <div className="font-bold text-sm mt-0.5">{formatINR(m.revenue)}</div>
+                  <div className="text-amber-400 text-[9px] mt-0.5">3M Moving Avg: {formatINR(m.movingAvg3M)}</div>
                   <div className="text-gray-400 mt-0.5">{m.count} invoices</div>
                   {m.growth !== 0 && (
-                    <div className={`mt-0.5 ${m.growth > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                      {m.growth > 0 ? '↑' : '↓'} {Math.abs(m.growth).toFixed(1)}%
+                    <div className={`mt-0.5 font-bold ${m.growth > 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {m.growth > 0 ? '↑' : '↓'} {Math.abs(m.growth).toFixed(0)}% MoM
                     </div>
                   )}
                 </div>
               </div>
+
               {/* Bar */}
-              <div className="w-full px-0.5">
-                <div className="w-full rounded-t-lg bg-gradient-to-t from-indigo-600 to-indigo-400 group-hover:from-indigo-500 group-hover:to-indigo-300 transition-all duration-500 relative overflow-hidden"
-                  style={{ height: `${maxRev > 0 ? Math.max((m.revenue / maxRev) * 100, m.revenue > 0 ? 4 : 0) : 0}%` }}>
+              <div className="w-full px-0.5 relative flex items-end justify-center h-full">
+                {/* Bar Element */}
+                <div
+                  className="w-full rounded-t-lg bg-gradient-to-t from-indigo-600 to-indigo-400 group-hover:from-indigo-500 group-hover:to-indigo-300 transition-all duration-500 relative overflow-hidden"
+                  style={{ height: `${maxRev > 0 ? Math.max((m.revenue / maxRev) * 100, m.revenue > 0 ? 4 : 0) : 0}%` }}
+                >
                   <div className="absolute top-0 left-0 w-full h-1/3 bg-white opacity-15 -skew-y-12" />
                 </div>
+                {/* 3-Month Moving Average Dot Indicator */}
+                {m.movingAvg3M > 0 && maxRev > 0 && (
+                  <div
+                    className="absolute w-2 h-2 rounded-full bg-amber-500 border border-white shadow-sm z-10 transform -translate-y-1/2"
+                    style={{ bottom: `${Math.min((m.movingAvg3M / maxRev) * 100, 98)}%` }}
+                    title={`3M Moving Avg: ${formatINR(m.movingAvg3M)}`}
+                  />
+                )}
               </div>
-              {/* Growth indicator */}
+
+              {/* Growth Badge */}
               {m.growth !== 0 && (
                 <div className={`text-[8px] font-bold mt-0.5 ${m.growth > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
                   {m.growth > 0 ? '↑' : '↓'}{Math.abs(m.growth).toFixed(0)}%
                 </div>
               )}
-              <span className="text-[9px] text-text-desc font-semibold mt-0.5 group-hover:text-text-title">{m.month}</span>
+              <span className="text-[9px] text-text-desc font-semibold mt-0.5 group-hover:text-indigo-600">{m.month}</span>
             </div>
           ))}
         </div>
+
         {/* Average line indicator */}
         {avgMonthly > 0 && (
-          <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-100 text-[10px] text-text-desc">
+          <div className="flex items-center gap-2 mt-4 pt-3 border-t border-slate-100 text-[10px] text-text-desc">
             <div className="w-6 border-t-2 border-dashed border-indigo-300" />
-            <span>Average: {formatINR(avgMonthly)}</span>
+            <span>Monthly Baseline Average: {formatINR(avgMonthly)}</span>
           </div>
         )}
       </div>
 
-      {/* Quarterly + State-wise */}
+      {/* Quarterly & State Breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Quarterly Comparison */}
         <div className="bg-bg-surface rounded-2xl border border-slate-100 shadow-sm p-5">
-          <h4 className="text-base font-bold text-text-title mb-1">Quarterly Comparison</h4>
+          <h4 className="text-base font-bold text-text-title mb-1">Quarterly Performance</h4>
           <p className="text-xs text-text-desc mb-4">{quarterlyData.currentYear} vs {quarterlyData.previousYear}</p>
           <div className="space-y-4">
             {quarterlyData.current.map((q, i) => {
@@ -132,17 +152,21 @@ const SalesSection = ({ analytics }) => {
         {/* State-wise Revenue */}
         <div className="bg-bg-surface rounded-2xl border border-slate-100 shadow-sm p-5">
           <h4 className="text-base font-bold text-text-title mb-1">Revenue by State</h4>
-          <p className="text-xs text-text-desc mb-4">Geographic distribution</p>
+          <p className="text-xs text-text-desc mb-4">Click any state to filter dashboard</p>
           {stateData.length === 0 ? (
             <p className="text-xs text-text-desc text-center py-8">No state data</p>
           ) : (
             <div className="space-y-3">
               {stateData.slice(0, 8).map((s, i) => (
-                <div key={s.state} className="group">
+                <div
+                  key={s.state}
+                  onClick={() => onFilterChange && onFilterChange('state', s.state)}
+                  className="group cursor-pointer p-1 rounded-lg hover:bg-slate-50 transition-colors"
+                >
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
                       <div className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: stateColors[i % stateColors.length] }} />
-                      <span className="text-xs font-semibold text-text-body truncate max-w-[140px]">{s.state}</span>
+                      <span className="text-xs font-semibold text-text-body truncate max-w-[140px] group-hover:text-indigo-600">{s.state}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <span className="text-[10px] text-text-desc">{s.count} inv.</span>

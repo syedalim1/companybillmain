@@ -1,6 +1,8 @@
 import React from 'react';
 
 const InsightCard = ({ insight }) => {
+  if (!insight) return null;
+
   const typeStyles = {
     critical: { bg: 'bg-red-50', border: 'border-red-200', icon: '🔴', label: 'text-red-700', badge: 'bg-red-100 text-red-800' },
     warning: { bg: 'bg-amber-50', border: 'border-amber-200', icon: '🟡', label: 'text-amber-700', badge: 'bg-amber-100 text-amber-800' },
@@ -24,19 +26,23 @@ const InsightCard = ({ insight }) => {
   );
 };
 
-export const ComparisonRow = ({ label, current, previous, change, pctChange, trend, formatter = v => v }) => (
-  <div className="flex items-center justify-between py-2.5 border-b border-slate-50 last:border-0">
-    <span className="text-xs font-medium text-text-desc">{label}</span>
-    <div className="flex items-center gap-4">
-      <span className="text-sm font-bold text-text-title">{formatter(current)}</span>
-      <span className="text-xs text-text-desc">{formatter(previous)}</span>
-      <span className={`text-xs font-bold px-1.5 py-0.5 rounded-lg ${
-        pctChange > 0 ? 'bg-emerald-100 text-emerald-700' : pctChange < 0 ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500'
-      }`}>
-        {pctChange > 0 ? '↑' : pctChange < 0 ? '↓' : '—'} {Math.abs(pctChange).toFixed(1)}%
-      </span>
+export const ComparisonRow = ({ label, current = 0, previous = 0, change = 0, pctChange = 0, formatter = v => v }) => {
+  const safePct = typeof pctChange === 'number' && !isNaN(pctChange) ? pctChange : 0;
+
+  return (
+    <div className="flex items-center justify-between py-2.5 border-b border-slate-50 last:border-0">
+      <span className="text-xs font-medium text-text-desc">{label}</span>
+      <div className="flex items-center gap-4">
+        <span className="text-sm font-bold text-text-title">{formatter(current)}</span>
+        <span className="text-xs text-text-desc">{formatter(previous)}</span>
+        <span className={`text-xs font-bold px-1.5 py-0.5 rounded-lg ${
+          safePct > 0 ? 'bg-emerald-100 text-emerald-700' : safePct < 0 ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-500'
+        }`}>
+          {safePct > 0 ? '↑' : safePct < 0 ? '↓' : '—'} {Math.abs(safePct).toFixed(1)}%
+        </span>
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 export default InsightCard;

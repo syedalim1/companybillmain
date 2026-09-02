@@ -1,10 +1,14 @@
-import React, { useState } from 'react';
-import { formatINR, safeDate } from '@/hooks/useAnalyticsEngine';
+import React, { useState, useEffect } from 'react';
 
 const DataTable = ({ columns, data, title, subtitle, onRowClick, emptyMessage = 'No data available', maxRows = 20 }) => {
   const [sortKey, setSortKey] = useState(null);
   const [sortDir, setSortDir] = useState('desc');
   const [page, setPage] = useState(0);
+
+  // Reset page index to 0 when filtered data changes length or set
+  useEffect(() => {
+    setPage(0);
+  }, [data?.length, title, subtitle]);
 
   const handleSort = (key) => {
     if (sortKey === key) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -22,8 +26,9 @@ const DataTable = ({ columns, data, title, subtitle, onRowClick, emptyMessage = 
     });
   }
 
-  const totalPages = Math.ceil(sorted.length / maxRows);
-  const paged = sorted.slice(page * maxRows, (page + 1) * maxRows);
+  const totalPages = Math.max(1, Math.ceil(sorted.length / maxRows));
+  const currentPage = Math.min(page, totalPages - 1);
+  const paged = sorted.slice(currentPage * maxRows, (currentPage + 1) * maxRows);
 
   return (
     <div className="bg-bg-surface rounded-2xl border border-slate-100 shadow-sm overflow-hidden">
@@ -71,11 +76,11 @@ const DataTable = ({ columns, data, title, subtitle, onRowClick, emptyMessage = 
       </div>
       {totalPages > 1 && (
         <div className="px-4 py-3 flex items-center justify-between border-t border-slate-100">
-          <span className="text-xs text-text-desc">Page {page + 1} of {totalPages}</span>
+          <span className="text-xs text-text-desc">Page {currentPage + 1} of {totalPages}</span>
           <div className="flex gap-1">
-            <button disabled={page === 0} onClick={() => setPage(p => p - 1)}
+            <button disabled={currentPage === 0} onClick={() => setPage(p => Math.max(0, p - 1))}
               className="px-3 py-1 text-xs font-bold rounded-lg bg-slate-100 text-text-body disabled:opacity-40 hover:bg-slate-200 transition-colors">Prev</button>
-            <button disabled={page >= totalPages - 1} onClick={() => setPage(p => p + 1)}
+            <button disabled={currentPage >= totalPages - 1} onClick={() => setPage(p => p + 1)}
               className="px-3 py-1 text-xs font-bold rounded-lg bg-slate-100 text-text-body disabled:opacity-40 hover:bg-slate-200 transition-colors">Next</button>
           </div>
         </div>

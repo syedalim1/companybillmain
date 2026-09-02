@@ -41,8 +41,8 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
   const [activeSection, setActiveSection] = useState('overview');
   const [filters, setFilters] = useState({
     period: 'all',
-    month: new Date().getMonth() + 1,
-    year: new Date().getFullYear(),
+    month: new Date().getUTCMonth() + 1,
+    year: new Date().getUTCFullYear(),
     startDate: null,
     endDate: null,
     docType: 'all',
@@ -55,12 +55,19 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
 
   const analytics = useAnalyticsEngine(savedInvoices, filters);
 
+  const handleFilterChange = (key, value) => {
+    setFilters(prev => ({
+      ...prev,
+      [key]: prev[key] === value ? null : value,
+    }));
+  };
+
   if (!analytics) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="flex items-center gap-3 text-text-desc">
           <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
-          <span className="font-medium">Loading analytics...</span>
+          <span className="font-medium">Loading business analytics...</span>
         </div>
       </div>
     );
@@ -68,21 +75,21 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
 
   const renderSection = () => {
     switch (activeSection) {
-      case 'overview': return <OverviewSection analytics={analytics} />;
-      case 'revenue': return <SalesSection analytics={analytics} />;
-      case 'customers': return <CustomerSection analytics={analytics} />;
-      case 'products': return <ProductSection analytics={analytics} />;
-      case 'gst': return <GSTSection analytics={analytics} />;
-      case 'payments': return <PaymentSection analytics={analytics} />;
-      case 'documents': return <DocumentsSection analytics={analytics} />;
+      case 'overview': return <OverviewSection analytics={analytics} onFilterChange={handleFilterChange} />;
+      case 'revenue': return <SalesSection analytics={analytics} onFilterChange={handleFilterChange} />;
+      case 'customers': return <CustomerSection analytics={analytics} onFilterChange={handleFilterChange} />;
+      case 'products': return <ProductSection analytics={analytics} onFilterChange={handleFilterChange} />;
+      case 'gst': return <GSTSection analytics={analytics} onFilterChange={handleFilterChange} />;
+      case 'payments': return <PaymentSection analytics={analytics} onFilterChange={handleFilterChange} />;
+      case 'documents': return <DocumentsSection analytics={analytics} filters={filters} onFilterChange={handleFilterChange} />;
       case 'reports': return <ReportsSection analytics={analytics} filters={filters} savedInvoices={savedInvoices} />;
-      default: return <OverviewSection analytics={analytics} />;
+      default: return <OverviewSection analytics={analytics} onFilterChange={handleFilterChange} />;
     }
   };
 
   return (
     <div className="space-y-4 pb-8">
-      {/* ═══ HEADER ═══ */}
+      {/* HEADER */}
       <div className="bg-bg-surface rounded-3xl p-6 shadow-sm border border-slate-100 relative overflow-hidden">
         <div className="absolute top-0 right-0 w-80 h-80 bg-indigo-100 rounded-full mix-blend-multiply filter blur-3xl opacity-25 transform translate-x-1/3 -translate-y-1/3 pointer-events-none" />
         <div className="absolute bottom-0 left-0 w-60 h-60 bg-purple-100 rounded-full mix-blend-multiply filter blur-3xl opacity-15 transform -translate-x-1/3 translate-y-1/3 pointer-events-none" />
@@ -97,17 +104,17 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
             <div>
               <h2 className="text-xl md:text-2xl font-extrabold text-text-title tracking-tight">Business Intelligence Center</h2>
               <p className="text-xs text-text-desc font-medium mt-0.5">
-                {analytics.currentPeriodLabel} • {analytics.filteredInvoices.length} documents
+                {analytics.currentPeriodLabel} • {analytics.filteredInvoices.length} active documents
               </p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* ═══ FILTER BAR ═══ */}
+      {/* FILTER BAR */}
       <FilterBar filters={filters} setFilters={setFilters} analytics={analytics} />
 
-      {/* ═══ SECTION NAVIGATION ═══ */}
+      {/* SECTION NAVIGATION */}
       <div className="overflow-x-auto scrollbar-hide -mx-1 px-1">
         <div className="flex gap-1 bg-slate-100 p-1 rounded-2xl w-fit min-w-full lg:min-w-0">
           {SECTIONS.map(section => (
@@ -127,7 +134,7 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
         </div>
       </div>
 
-      {/* ═══ ACTIVE SECTION CONTENT ═══ */}
+      {/* ACTIVE SECTION CONTENT */}
       <div className="min-h-[400px]">
         {renderSection()}
       </div>

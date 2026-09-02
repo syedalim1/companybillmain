@@ -5,13 +5,13 @@ const FilterBar = ({ filters, setFilters, analytics }) => {
 
   const update = (key, value) => setFilters(prev => ({ ...prev, [key]: value }));
   const resetFilters = () => setFilters({
-    period: 'all', month: new Date().getMonth() + 1, year: new Date().getFullYear(),
+    period: 'all', month: new Date().getUTCMonth() + 1, year: new Date().getUTCFullYear(),
     startDate: null, endDate: null, docType: 'all', customerId: null,
     productName: null, state: null, paymentStatus: null, compareMode: false,
   });
 
   const hasActiveFilters = filters.period !== 'all' || filters.docType !== 'all' ||
-    filters.customerId || filters.productName || filters.state || filters.paymentStatus;
+    filters.customerId || filters.productName || filters.state || filters.paymentStatus || filters.startDate;
 
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -26,6 +26,7 @@ const FilterBar = ({ filters, setFilters, analytics }) => {
             { key: 'month', label: 'Month' },
             { key: 'quarter', label: 'Quarter' },
             { key: 'year', label: 'Year' },
+            { key: 'custom', label: 'Custom' },
           ].map(p => (
             <button key={p.key} onClick={() => update('period', p.key)}
               className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${
@@ -34,7 +35,7 @@ const FilterBar = ({ filters, setFilters, analytics }) => {
           ))}
         </div>
 
-        {/* Month/Year selectors */}
+        {/* Month/Year selectors for Month/Quarter presets */}
         {(filters.period === 'month' || filters.period === 'quarter') && (
           <select value={filters.month} onChange={e => update('month', parseInt(e.target.value))}
             className="px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-text-body focus:outline-none focus:ring-2 focus:ring-indigo-300">
@@ -44,8 +45,27 @@ const FilterBar = ({ filters, setFilters, analytics }) => {
         {filters.period !== 'all' && filters.period !== 'custom' && (
           <select value={filters.year} onChange={e => update('year', parseInt(e.target.value))}
             className="px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-text-body focus:outline-none focus:ring-2 focus:ring-indigo-300">
-            {(analytics?.availableYears || [new Date().getFullYear()]).map(y => <option key={y} value={y}>{y}</option>)}
+            {(analytics?.availableYears || [new Date().getUTCFullYear()]).map(y => <option key={y} value={y}>{y}</option>)}
           </select>
+        )}
+
+        {/* Custom Date Range Inputs */}
+        {filters.period === 'custom' && (
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={filters.startDate || ''}
+              onChange={e => update('startDate', e.target.value)}
+              className="px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-text-body focus:outline-none focus:ring-2 focus:ring-indigo-300"
+            />
+            <span className="text-xs text-text-desc font-bold">to</span>
+            <input
+              type="date"
+              value={filters.endDate || ''}
+              onChange={e => update('endDate', e.target.value)}
+              className="px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-text-body focus:outline-none focus:ring-2 focus:ring-indigo-300"
+            />
+          </div>
         )}
 
         {/* Document type */}
@@ -63,7 +83,7 @@ const FilterBar = ({ filters, setFilters, analytics }) => {
           <button onClick={() => update('compareMode', !filters.compareMode)}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all border ${
               filters.compareMode
-                ? 'bg-indigo-50 border-indigo-200 text-indigo-700'
+                ? 'bg-indigo-50 border-indigo-200 text-indigo-700 shadow-sm'
                 : 'bg-slate-50 border-slate-200 text-text-desc hover:text-text-body'
             }`}>
             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" /></svg>
@@ -93,19 +113,21 @@ const FilterBar = ({ filters, setFilters, analytics }) => {
       {/* Advanced filters */}
       {showAdvanced && (
         <div className="px-4 pb-4 pt-1 border-t border-slate-100 flex flex-wrap gap-3">
-          {/* Customer */}
+          {/* Customer Filter */}
           <div className="flex flex-col gap-1">
             <label className="text-[10px] font-bold text-text-desc uppercase tracking-wider">Customer</label>
             <select value={filters.customerId || ''} onChange={e => update('customerId', e.target.value || null)}
               className="px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-text-body focus:outline-none focus:ring-2 focus:ring-indigo-300 min-w-[160px]">
               <option value="">All Customers</option>
               {(analytics?.availableCustomers || []).map(c => (
-                <option key={c.gstin || c.name} value={c.gstin || c.name}>{c.name}{c.gstin ? ` (${c.gstin.slice(-4)})` : ''}</option>
+                <option key={c.id || c.name} value={c.id || c.name}>
+                  {c.name}{c.gstin ? ` (${c.gstin.slice(-6)})` : ''}
+                </option>
               ))}
             </select>
           </div>
 
-          {/* Product */}
+          {/* Product Filter */}
           <div className="flex flex-col gap-1">
             <label className="text-[10px] font-bold text-text-desc uppercase tracking-wider">Product</label>
             <select value={filters.productName || ''} onChange={e => update('productName', e.target.value || null)}
@@ -117,7 +139,7 @@ const FilterBar = ({ filters, setFilters, analytics }) => {
             </select>
           </div>
 
-          {/* State */}
+          {/* State Filter */}
           <div className="flex flex-col gap-1">
             <label className="text-[10px] font-bold text-text-desc uppercase tracking-wider">State</label>
             <select value={filters.state || ''} onChange={e => update('state', e.target.value || null)}
@@ -129,9 +151,9 @@ const FilterBar = ({ filters, setFilters, analytics }) => {
             </select>
           </div>
 
-          {/* Payment Status */}
+          {/* Payment Status Filter */}
           <div className="flex flex-col gap-1">
-            <label className="text-[10px] font-bold text-text-desc uppercase tracking-wider">Payment</label>
+            <label className="text-[10px] font-bold text-text-desc uppercase tracking-wider">Payment Status</label>
             <select value={filters.paymentStatus || ''} onChange={e => update('paymentStatus', e.target.value || null)}
               className="px-3 py-1.5 rounded-xl bg-slate-50 border border-slate-200 text-xs font-semibold text-text-body focus:outline-none focus:ring-2 focus:ring-indigo-300 min-w-[120px]">
               <option value="">All Status</option>
