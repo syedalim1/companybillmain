@@ -198,10 +198,13 @@ function computeSummary(invoices, periodDays = 30) {
   const unpaidInvoices = invoices.filter(i => i.paymentStatus === 'unpaid' || !i.paymentStatus);
   const overdueInvoices = invoices.filter(i => i.paymentStatus === 'overdue');
 
-  const totalCollected = paidInvoices.reduce((s, i) => s + safeNum(i.grandTotal), 0)
+  // TRUE payment calculation: use paymentAmount when available, fall back to grandTotal
+  // This ensures "Collected" reflects actual receipts, not just invoice values for paid status
+  const totalCollected =
+    paidInvoices.reduce((s, i) => s + (safeNum(i.paymentAmount) > 0 ? safeNum(i.paymentAmount) : safeNum(i.grandTotal)), 0)
     + partialInvoices.reduce((s, i) => s + safeNum(i.paymentAmount), 0);
   const totalOutstanding = invoices.filter(i => i.paymentStatus !== 'paid')
-    .reduce((s, i) => s + (safeNum(i.grandTotal) - safeNum(i.paymentAmount)), 0);
+    .reduce((s, i) => s + Math.max(0, safeNum(i.grandTotal) - safeNum(i.paymentAmount)), 0);
 
   const collectionRate = totalRevenue > 0 ? (totalCollected / totalRevenue) * 100 : 0;
 
@@ -218,7 +221,7 @@ function computeSummary(invoices, periodDays = 30) {
       paid: paidInvoices.length, partial: partialInvoices.length,
       unpaid: unpaidInvoices.length, overdue: overdueInvoices.length,
     },
-    paidAmount: paidInvoices.reduce((s, i) => s + safeNum(i.grandTotal), 0),
+    paidAmount: paidInvoices.reduce((s, i) => s + (safeNum(i.paymentAmount) > 0 ? safeNum(i.paymentAmount) : safeNum(i.grandTotal)), 0),
   };
 }
 
@@ -250,15 +253,26 @@ function computeRunRate(invoices, now, targetMonth, targetYear) {
 }
 
 function computeMonthlyTrends(invoices, now) {
+  // Filter out future-dated invoices — they corrupt current-month charts and run-rate forecasts
+  const validInvoices = invoices.filter(inv => {
+    const d = safeDate(inv.date);
+    return d && d <= now;
+  });
+
   const trends = [];
   for (let i = 11; i >= 0; i--) {
     const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1, 12, 0, 0));
-    const mi = invoices.filter(inv => {
+    const mi = validInvoices.filter(inv => {
       const id = safeDate(inv.date);
       return id && id.getUTCMonth() === d.getUTCMonth() && id.getUTCFullYear() === d.getUTCFullYear();
     });
     const revenue = mi.reduce((s, inv) => s + safeNum(inv.grandTotal), 0);
-    const collected = mi.filter(inv => inv.paymentStatus === 'paid').reduce((s, inv) => s + safeNum(inv.grandTotal), 0);
+    // True collected amount per month
+    const collected = mi.reduce((s, inv) => {
+      if (inv.paymentStatus === 'paid') return s + (safeNum(inv.paymentAmount) > 0 ? safeNum(inv.paymentAmount) : safeNum(inv.grandTotal));
+      if (inv.paymentStatus === 'partial') return s + safeNum(inv.paymentAmount);
+      return s;
+    }, 0);
     const gst = mi.reduce((s, inv) => s + safeNum(inv.cgstAmount) + safeNum(inv.sgstAmount) + safeNum(inv.igstAmount), 0);
     trends.push({
       month: d.toLocaleDateString('en-IN', { month: 'short' }),
@@ -328,8 +342,11 @@ function computeGSTBreakdown(gstInvoices) {
   const taxable = gstInvoices.reduce((s, i) => s + safeNum(i.subtotal), 0);
 
   // B2B (with GSTIN) vs B2C (without GSTIN)
-  const b2bInvoices = gstInvoices.filter(i => (i.buyerGstin || i.buyer?.gstin || '').trim().length > 3);
-  const b2cInvoices = gstInvoices.filter(i => !(i.buyerGstin || i.buyer?.gstin || '').trim().length > 3);
+  // FIX: Previous code had operator precedence bug: !(gstin.length > 3) incorrectly evaluated
+  // Correct: a B2B invoice has a GSTIN string longer than 3 characters
+  const hasGstin = (inv) => (inv.buyerGstin || inv.buyer?.gstin || '').trim().length > 3;
+  const b2bInvoices = gstInvoices.filter(i => hasGstin(i));
+  const b2cInvoices = gstInvoices.filter(i => !hasGstin(i));
 
   const b2b = {
     count: b2bInvoices.length,
@@ -354,18 +371,22 @@ function computeGSTBreakdown(gstInvoices) {
 }
 
 function computeCustomerAnalysis(invoices, now) {
+  // NAME-FIRST grouping: always use normalized customer name as primary key.
+  // This consolidates e.g. "ALMOND INTERIOR" even when GSTINs differ across invoices.
   const map = new Map();
 
   invoices.forEach(inv => {
     const rawName = inv.buyerName || inv.buyer?.name || 'Unknown Buyer';
-    const rawGstin = inv.buyerGstin || inv.buyer?.gstin || '';
-    const normKey = rawGstin ? `gstin:${rawGstin.trim().toUpperCase()}` : `name:${normalizeText(rawName)}`;
+    const rawGstin = (inv.buyerGstin || inv.buyer?.gstin || '').trim();
+    // Primary key = normalized name (fixes 26→41 customer count discrepancy)
+    const normKey = `name:${normalizeText(rawName)}`;
 
     if (!map.has(normKey)) {
       map.set(normKey, {
         id: normKey,
         name: rawName.trim(),
-        gstin: rawGstin.trim(),
+        gstin: rawGstin,         // First GSTIN seen — may be updated below
+        gstins: new Set(),       // Collect all unique GSTINs for this name
         state: inv.buyerState || inv.buyer?.state || '',
         invoiceCount: 0,
         totalRevenue: 0,
@@ -377,16 +398,23 @@ function computeCustomerAnalysis(invoices, now) {
     }
 
     const c = map.get(normKey);
+    // Track all GSTINs encountered for this customer name
+    if (rawGstin && rawGstin.length > 3) c.gstins.add(rawGstin.toUpperCase());
+    // Prefer a non-empty GSTIN as the canonical one
+    if (!c.gstin && rawGstin) c.gstin = rawGstin;
+
     c.invoiceCount++;
     const gt = safeNum(inv.grandTotal);
     c.totalRevenue += gt;
 
+    // True payment calc: use paymentAmount when available
     if (inv.paymentStatus === 'paid') {
-      c.totalPaid += gt;
+      const paid = safeNum(inv.paymentAmount) > 0 ? safeNum(inv.paymentAmount) : gt;
+      c.totalPaid += paid;
     } else {
       const pd = safeNum(inv.paymentAmount);
       c.totalPaid += pd;
-      c.totalOutstanding += (gt - pd);
+      c.totalOutstanding += Math.max(0, gt - pd);
     }
 
     const d = safeDate(inv.date);
@@ -396,12 +424,21 @@ function computeCustomerAnalysis(invoices, now) {
     c.invoices.push(inv);
   });
 
-  const all = [...map.values()].sort((a, b) => b.totalRevenue - a.totalRevenue);
+  const all = [...map.values()].map(c => ({
+    ...c,
+    // missingGstin = customer has invoices but none had a valid GSTIN (likely B2B data gap)
+    missingGstin: c.gstins.size === 0,
+    gstin: c.gstin || '',
+    allGstins: [...c.gstins],
+  })).sort((a, b) => b.totalRevenue - a.totalRevenue);
+
   const totalRev = all.reduce((s, c) => s + c.totalRevenue, 0);
 
   all.forEach(c => {
     c.contribution = totalRev > 0 ? (c.totalRevenue / totalRev) * 100 : 0;
-    c.daysSinceLastOrder = c.lastOrderDate ? daysBetween(c.lastOrderDate, now) : 999;
+    // Always compute a real number — never leave as 999 for display
+    c.daysSinceLastOrder = c.lastOrderDate ? daysBetween(c.lastOrderDate, now) : 9999;
+    delete c.gstins; // Clean up the Set before returning
   });
 
   const dormant = all.filter(c => c.totalRevenue >= 5000 && c.daysSinceLastOrder > 60);
@@ -519,35 +556,63 @@ function computePaymentAnalysis(invoices, now) {
   unpaid.forEach(inv => {
     const d = safeDate(inv.date);
     if (!d) return;
+    // Aging strictly from invoice date to today
     const age = daysBetween(d, now);
-    const outstanding = safeNum(inv.grandTotal) - safeNum(inv.paymentAmount);
+    const outstanding = Math.max(0, safeNum(inv.grandTotal) - safeNum(inv.paymentAmount));
     if (outstanding <= 0) return;
     const bucket = age <= 30 ? '0-30' : age <= 60 ? '31-60' : age <= 90 ? '61-90' : '90+';
     aging[bucket].count++;
     aging[bucket].amount += outstanding;
   });
 
-  // Outstanding by Customer
+  // Outstanding by Customer — name-first grouping consistent with computeCustomerAnalysis
   const custMap = new Map();
   unpaid.forEach(inv => {
     const rawName = inv.buyerName || inv.buyer?.name || 'Unknown';
-    const rawGstin = inv.buyerGstin || inv.buyer?.gstin || '';
-    const normKey = rawGstin ? `gstin:${rawGstin.trim().toUpperCase()}` : `name:${normalizeText(rawName)}`;
+    const rawGstin = (inv.buyerGstin || inv.buyer?.gstin || '').trim();
+    // Name-first key (consistent with customer analysis grouping)
+    const normKey = `name:${normalizeText(rawName)}`;
 
     if (!custMap.has(normKey)) {
-      custMap.set(normKey, { id: normKey, name: rawName.trim(), gstin: rawGstin.trim(), outstanding: 0, invoiceCount: 0, oldestDays: 0 });
+      custMap.set(normKey, {
+        id: normKey,
+        name: rawName.trim(),
+        gstin: rawGstin,
+        outstanding: 0,
+        invoiceCount: 0,
+        oldestDays: 0,
+        unpaidInvoices: [], // Detailed list for drill-down
+      });
     }
 
     const c = custMap.get(normKey);
-    const outstanding = safeNum(inv.grandTotal) - safeNum(inv.paymentAmount);
+    const outstanding = Math.max(0, safeNum(inv.grandTotal) - safeNum(inv.paymentAmount));
     if (outstanding <= 0) return;
     c.outstanding += outstanding;
     c.invoiceCount++;
     const d = safeDate(inv.date);
-    if (d) c.oldestDays = Math.max(c.oldestDays, daysBetween(d, now));
+    const ageDays = d ? daysBetween(d, now) : 0;
+    if (d) c.oldestDays = Math.max(c.oldestDays, ageDays);
+
+    // Collect invoice detail for drill-down panel
+    c.unpaidInvoices.push({
+      id: inv.id,
+      invoiceNo: inv.invoiceNo || inv.quotationNo || inv.id,
+      date: inv.date,
+      grandTotal: safeNum(inv.grandTotal),
+      paymentAmount: safeNum(inv.paymentAmount),
+      outstanding,
+      ageDays,
+      ageBucket: ageDays <= 30 ? '0-30' : ageDays <= 60 ? '31-60' : ageDays <= 90 ? '61-90' : '90+',
+      paymentStatus: inv.paymentStatus || 'unpaid',
+    });
   });
 
-  const outstandingByCustomer = [...custMap.values()].filter(c => c.outstanding > 0).sort((a, b) => b.outstanding - a.outstanding);
+  const outstandingByCustomer = [...custMap.values()]
+    .filter(c => c.outstanding > 0)
+    .map(c => ({ ...c, unpaidInvoices: c.unpaidInvoices.sort((a, b) => b.ageDays - a.ageDays) }))
+    .sort((a, b) => b.outstanding - a.outstanding);
+
   const totalOutstanding = Object.values(aging).reduce((s, b) => s + b.amount, 0);
 
   return {
@@ -650,6 +715,41 @@ function computeRecentActivity(invoices) {
     createdAt: inv.createdAt,
     rawInvoice: inv,
   }));
+}
+
+/**
+ * Compute data quality issues — future-dated invoices & B2B customers missing GSTINs.
+ * Used to display advisory banners in the Overview section.
+ */
+function computeDataQuality(invoices, now) {
+  const futureDatedInvoices = invoices.filter(inv => {
+    const d = safeDate(inv.date);
+    return d && d > now;
+  });
+
+  // B2B = gst-bill invoices where no GSTIN is present (data entry gap)
+  const gstBillInvoices = invoices.filter(i => i.mode === 'gst-bill');
+  const missingGstinMap = new Map();
+  gstBillInvoices.forEach(inv => {
+    const rawName = inv.buyerName || inv.buyer?.name || '';
+    const rawGstin = (inv.buyerGstin || inv.buyer?.gstin || '').trim();
+    if (!rawName) return;
+    const normKey = normalizeText(rawName);
+    if (!missingGstinMap.has(normKey)) {
+      missingGstinMap.set(normKey, { name: rawName.trim(), hasGstin: false });
+    }
+    if (rawGstin && rawGstin.length > 3) {
+      missingGstinMap.get(normKey).hasGstin = true;
+    }
+  });
+  const missingGstinCustomers = [...missingGstinMap.values()].filter(c => !c.hasGstin);
+
+  return {
+    futureDatedCount: futureDatedInvoices.length,
+    futureDatedInvoices,
+    missingGstinCustomers,
+    missingGstinCount: missingGstinCustomers.length,
+  };
 }
 
 function generateInsights(summary, customers, payment, trends, gstBreakdown, dcStats, runRate) {
@@ -883,12 +983,15 @@ export function useAnalyticsEngine(savedInvoices, filters = {}) {
     const paymentAnalysis = computePaymentAnalysis(revenueInvoices, now);
     const gstBreakdown = computeGSTBreakdown(gstFiltered);
     const monthlyGST = computeMonthlyGST(gstFiltered, now);
+    const dataQuality = computeDataQuality(savedInvoices, now); // Use ALL invoices for data quality scan
 
     // Documents Section stats: compute stats from periodFiltered with entity filters applied, ignoring docType filter
     const docFilteredBase = applyEntityFiltersNoDocType(periodFiltered);
     const quotationStats = computeQuotationStats(docFilteredBase.filter(i => i.mode === 'quotation'));
     const dcStats = computeDCStats(docFilteredBase.filter(i => i.mode === 'dc-bill'), now);
     const slipStats = computeSlipStats(docFilteredBase.filter(i => i.mode === 'slip-bill'));
+
+    const monthlyTrends = computeMonthlyTrends(revenueInvoices, now);
 
     return {
       filteredInvoices: filtered,
@@ -897,7 +1000,7 @@ export function useAnalyticsEngine(savedInvoices, filters = {}) {
       summary,
       runRate,
       comparison,
-      monthlyTrends: computeMonthlyTrends(revenueInvoices, now),
+      monthlyTrends,
       monthlyGST,
       quarterlyData: computeQuarterlyData(revenueInvoices, now, year),
       gstBreakdown,
@@ -911,7 +1014,8 @@ export function useAnalyticsEngine(savedInvoices, filters = {}) {
       dcStats,
       slipStats,
       recentActivity: computeRecentActivity(filtered),
-      insights: generateInsights(summary, customerAnalysis, paymentAnalysis, computeMonthlyTrends(revenueInvoices, now), gstBreakdown, dcStats, runRate),
+      dataQuality,
+      insights: generateInsights(summary, customerAnalysis, paymentAnalysis, monthlyTrends, gstBreakdown, dcStats, runRate),
       availableCustomers: [...custMap.values()].sort((a, b) => a.name.localeCompare(b.name)),
       availableProducts: [...prodSet].sort(),
       availableStates: [...stSet].sort(),

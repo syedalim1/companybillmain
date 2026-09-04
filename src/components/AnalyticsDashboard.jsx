@@ -114,10 +114,17 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
       {/* FILTER BAR */}
       <FilterBar filters={filters} setFilters={setFilters} analytics={analytics} />
 
-      {/* SECTION NAVIGATION */}
+      {/* SECTION NAVIGATION — 'Documents' tab hidden when no quotations/DCs/slip bills exist */}
       <div className="overflow-x-auto scrollbar-hide -mx-1 px-1">
         <div className="flex gap-1 bg-slate-100 p-1 rounded-2xl w-fit min-w-full lg:min-w-0">
-          {SECTIONS.map(section => (
+          {SECTIONS.filter(section => {
+            // Dynamically hide Documents tab if all supplementary doc types have 0 records
+            if (section.key === 'documents') {
+              const { quotationStats, dcStats, slipStats } = analytics;
+              return (quotationStats?.count || 0) + (dcStats?.count || 0) + (slipStats?.count || 0) > 0;
+            }
+            return true;
+          }).map(section => (
             <button
               key={section.key}
               onClick={() => setActiveSection(section.key)}
@@ -133,6 +140,7 @@ const AnalyticsDashboard = ({ savedInvoices }) => {
           ))}
         </div>
       </div>
+
 
       {/* ACTIVE SECTION CONTENT */}
       <div className="min-h-[400px]">

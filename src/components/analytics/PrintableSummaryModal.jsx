@@ -95,11 +95,11 @@ const PrintableSummaryModal = ({ isOpen, onClose, analytics }) => {
                   </tr>
                 </thead>
                 <tbody>
-                  {customers.top.slice(0, 5).map(c => (
+                  {(customers?.top || []).slice(0, 5).map(c => (
                     <tr key={c.id || c.name} className="border-b border-slate-100">
                       <td className="p-2 font-bold">{c.name}</td>
                       <td className="p-2 text-right">{formatINR(c.totalRevenue)}</td>
-                      <td className="p-2 text-right font-bold">{c.contribution.toFixed(1)}%</td>
+                      <td className="p-2 text-right font-bold">{(c.contribution || 0).toFixed(1)}%</td>
                     </tr>
                   ))}
                 </tbody>

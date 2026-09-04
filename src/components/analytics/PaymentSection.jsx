@@ -1,11 +1,12 @@
-import React from 'react';
-import { formatINR } from '@/hooks/useAnalyticsEngine';
+import React, { useState } from 'react';
+import { formatINR, safeDate } from '@/hooks/useAnalyticsEngine';
 
 const PaymentSection = ({ analytics, onFilterChange }) => {
   if (!analytics) return null;
   const { summary, payment } = analytics;
   const { stats, aging, outstandingByCustomer, totalOutstanding } = payment;
   const total = stats.paid + stats.partial + stats.unpaid + stats.overdue;
+  const [expandedCustomer, setExpandedCustomer] = useState(null);
 
   // Ring Chart calculations
   const size = 150;
@@ -152,28 +153,76 @@ const PaymentSection = ({ analytics, onFilterChange }) => {
           )}
         </div>
 
-        {/* Outstanding by Customer */}
+        {/* Outstanding by Customer — with drill-down */}
         <div className="bg-bg-surface rounded-2xl border border-slate-100 shadow-sm p-5">
           <h4 className="text-base font-bold text-text-title mb-1">Outstanding by Customer</h4>
-          <p className="text-xs text-text-desc mb-4">Click to filter dashboard by client</p>
+          <p className="text-xs text-text-desc mb-4">Click a client to view unpaid invoices</p>
           {outstandingByCustomer.length === 0 ? (
             <p className="text-xs text-text-desc text-center py-8">No outstanding receivables</p>
           ) : (
-            <div className="space-y-2">
-              {outstandingByCustomer.slice(0, 8).map((c) => (
-                <div
-                  key={c.gstin || c.name}
-                  onClick={() => onFilterChange && onFilterChange('customerId', c.gstin || c.name)}
-                  className="flex items-center gap-3 p-2.5 rounded-xl bg-red-50/40 hover:bg-red-50 transition-colors cursor-pointer"
-                >
-                  <div className="w-7 h-7 rounded-full bg-red-100 flex items-center justify-center text-[10px] font-bold text-red-700 shrink-0">{c.name.charAt(0)}</div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs font-bold text-text-title truncate">{c.name}</div>
-                    <div className="text-[10px] text-text-desc">{c.invoiceCount} inv. • {c.oldestDays}d oldest</div>
+            <div className="space-y-1">
+              {outstandingByCustomer.slice(0, 8).map((c) => {
+                const isExpanded = expandedCustomer === (c.id || c.name);
+                const agingColors = { '0-30': 'text-emerald-700 bg-emerald-50', '31-60': 'text-amber-700 bg-amber-50', '61-90': 'text-orange-700 bg-orange-50', '90+': 'text-red-700 bg-red-50' };
+                return (
+                  <div key={c.id || c.name}>
+                    <div
+                      onClick={() => {
+                        setExpandedCustomer(isExpanded ? null : (c.id || c.name));
+                        if (!isExpanded && onFilterChange) onFilterChange('customerId', c.id || c.name);
+                      }}
+                      className={`flex items-center gap-3 p-2.5 rounded-xl transition-colors cursor-pointer ${
+                        isExpanded ? 'bg-red-50 border border-red-200' : 'bg-red-50/40 hover:bg-red-50 border border-transparent'
+                      }`}
+                    >
+                      <div className="w-7 h-7 rounded-full bg-red-100 flex items-center justify-center text-[10px] font-bold text-red-700 shrink-0">{(c.name || 'C').charAt(0).toUpperCase()}</div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-xs font-bold text-text-title truncate">{c.name}</div>
+                        <div className="text-[10px] text-text-desc">{c.invoiceCount} inv. • {c.oldestDays}d oldest</div>
+                      </div>
+                      <div className="text-sm font-bold text-red-600 shrink-0">{formatINR(c.outstanding)}</div>
+                      <svg className={`w-3.5 h-3.5 text-text-desc transition-transform shrink-0 ${isExpanded ? 'rotate-180 text-red-500' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </div>
+
+                    {/* Drill-down: unpaid invoice list */}
+                    {isExpanded && c.unpaidInvoices && c.unpaidInvoices.length > 0 && (
+                      <div className="mt-1 ml-10 mr-1 bg-white border border-red-100 rounded-xl overflow-hidden shadow-xs">
+                        <div className="px-3 py-2 bg-red-50/50 border-b border-red-100">
+                          <p className="text-[10px] font-bold text-red-800 uppercase tracking-wider">Unpaid Invoices — {c.name}</p>
+                        </div>
+                        <div className="divide-y divide-slate-50">
+                          {c.unpaidInvoices.map((inv, idx) => {
+                            const d = safeDate(inv.date);
+                            const dateStr = d ? d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }) : '—';
+                            const agingClass = agingColors[inv.ageBucket] || 'text-slate-600 bg-slate-50';
+                            return (
+                              <div key={inv.id || idx} className="flex items-center justify-between px-3 py-2 text-xs hover:bg-slate-50/50">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span className="font-bold text-text-title shrink-0">#{inv.invoiceNo}</span>
+                                  <span className="text-text-desc shrink-0">{dateStr}</span>
+                                  <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${agingClass} shrink-0`}>{inv.ageBucket} days</span>
+                                </div>
+                                <div className="text-right shrink-0 ml-2">
+                                  <div className="font-bold text-red-600">{formatINR(inv.outstanding)}</div>
+                                  {inv.paymentAmount > 0 && (
+                                    <div className="text-[9px] text-text-desc">Paid: {formatINR(inv.paymentAmount)}</div>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        <div className="px-3 py-2 bg-slate-50/50 border-t border-slate-100 flex justify-between">
+                          <span className="text-[10px] text-text-desc font-semibold">{c.unpaidInvoices.length} invoice{c.unpaidInvoices.length !== 1 ? 's' : ''}</span>
+                          <span className="text-[10px] font-bold text-red-600">{formatINR(c.outstanding)} total outstanding</span>
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="text-sm font-bold text-red-600 shrink-0">{formatINR(c.outstanding)}</div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

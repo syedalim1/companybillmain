@@ -1,18 +1,63 @@
-import React from 'react';
+import React, { useState } from 'react';
 import MetricCard from './MetricCard';
 import InsightCard, { ComparisonRow } from './InsightCard';
 import { formatINR, safeDate } from '@/hooks/useAnalyticsEngine';
 
 const OverviewSection = ({ analytics, onFilterChange }) => {
   if (!analytics) return null;
-  const { summary, runRate, comparison, monthlyTrends, documentMix, recentActivity, insights } = analytics;
+  const { summary, runRate, comparison, monthlyTrends, documentMix, recentActivity, insights, dataQuality } = analytics;
+  const [dismissFuture, setDismissFuture] = useState(false);
+  const [dismissGstin, setDismissGstin] = useState(false);
 
   const revSpark = monthlyTrends.map(m => m.revenue);
   const colSpark = monthlyTrends.map(m => m.collected);
   const maxRev = Math.max(...monthlyTrends.map(m => m.revenue), 1);
 
+  // Compute MoM trend: compare last 2 completed months in trends (skip current in-progress month)
+  const now = new Date();
+  const completedTrends = monthlyTrends.filter(m => {
+    // A month is "completed" if it's not the current ongoing month
+    const isCurrentMonth = m.monthIndex === now.getUTCMonth() && m.year === now.getUTCFullYear();
+    return !isCurrentMonth && m.revenue > 0;
+  });
+  const momGrowth = completedTrends.length >= 2
+    ? ((completedTrends[completedTrends.length - 1].revenue - completedTrends[completedTrends.length - 2].revenue)
+        / Math.max(1, completedTrends[completedTrends.length - 2].revenue)) * 100
+    : null;
+
   return (
     <div className="space-y-6">
+      {/* Data Quality Alerts — dismissable banners */}
+      {dataQuality?.futureDatedCount > 0 && !dismissFuture && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl bg-amber-50 border border-amber-200 shadow-xs">
+          <div className="flex items-center gap-3">
+            <span className="text-base">⚠️</span>
+            <div>
+              <p className="text-xs font-bold text-amber-900">
+                {dataQuality.futureDatedCount} invoice{dataQuality.futureDatedCount !== 1 ? 's' : ''} ha{dataQuality.futureDatedCount !== 1 ? 've' : 's'} future dates and {dataQuality.futureDatedCount !== 1 ? 'are' : 'is'} excluded from Revenue Flow charts.
+              </p>
+              <p className="text-[10px] text-amber-700 mt-0.5">Check invoices: {dataQuality.futureDatedInvoices.slice(0, 3).map(i => i.invoiceNo || i.id).join(', ')}{dataQuality.futureDatedCount > 3 ? ` +${dataQuality.futureDatedCount - 3} more` : ''}</p>
+            </div>
+          </div>
+          <button onClick={() => setDismissFuture(true)} className="text-amber-600 hover:text-amber-900 text-xs font-bold shrink-0 px-2">✕</button>
+        </div>
+      )}
+
+      {dataQuality?.missingGstinCount > 0 && !dismissGstin && (
+        <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-2xl bg-blue-50 border border-blue-200 shadow-xs">
+          <div className="flex items-center gap-3">
+            <span className="text-base">ℹ️</span>
+            <div>
+              <p className="text-xs font-bold text-blue-900">
+                {dataQuality.missingGstinCount} GST invoice customer{dataQuality.missingGstinCount !== 1 ? 's' : ''} missing GSTIN — may affect GSTR-1 B2B filing.
+              </p>
+              <p className="text-[10px] text-blue-700 mt-0.5">Customers: {dataQuality.missingGstinCustomers.slice(0, 3).map(c => c.name).join(', ')}{dataQuality.missingGstinCount > 3 ? ` +${dataQuality.missingGstinCount - 3} more` : ''}</p>
+            </div>
+          </div>
+          <button onClick={() => setDismissGstin(true)} className="text-blue-600 hover:text-blue-900 text-xs font-bold shrink-0 px-2">✕</button>
+        </div>
+      )}
+
       {/* Top Insights & Alerts */}
       {insights.length > 0 && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -22,15 +67,27 @@ const OverviewSection = ({ analytics, onFilterChange }) => {
 
       {/* Hero Metric Cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <MetricCard
-          title="Total Revenue"
-          value={formatINR(summary.totalRevenue)}
-          subtitle={`${summary.invoiceCount} invoices`}
-          color="indigo"
-          sparkData={revSpark}
-          trend={comparison?.revenue?.pctChange}
-          icon={<svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
-        />
+        {/* Total Revenue with MoM badge */}
+        <div className="relative">
+          <MetricCard
+            title="Total Revenue"
+            value={formatINR(summary.totalRevenue)}
+            subtitle={`${summary.invoiceCount} invoices`}
+            color="indigo"
+            sparkData={revSpark}
+            trend={comparison?.revenue?.pctChange}
+            icon={<svg className="w-5 h-5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>}
+          />
+          {momGrowth !== null && (
+            <div className={`absolute top-2 right-2 flex items-center gap-0.5 px-1.5 py-0.5 rounded-lg text-[9px] font-extrabold ${
+              momGrowth >= 0 ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700'
+            }`}>
+              <span>{momGrowth >= 0 ? '↑' : '↓'}</span>
+              <span>{Math.abs(momGrowth).toFixed(1)}%</span>
+              <span className="font-normal text-[8px] ml-0.5">MoM</span>
+            </div>
+          )}
+        </div>
         <MetricCard
           title="GST Liability"
           value={formatINR(analytics.gstBreakdown.total)}
